@@ -57,8 +57,6 @@ auto linear_activation_variables(int T, int L, const vec<int>& C) {
     return z;
 }
 
-auto 
-
 auto total_error_variables(int T) {
     vec<GRBVar> E = vec<GRBVar>(T); 
     for(int t = 0; t < T; ++t) {
@@ -79,16 +77,16 @@ auto output_variables(int T, int L, const vec<int>& C) {
 }
 
 auto abs_error_variables(int T, int L, const vec<int>& C) {
-    vec<vec<vec<GRBVar>>> y_diff = vec<vec<vec<GRBVar>>>(T);
+    vec<vec<vec<GRBVar>>> y_abs = vec<vec<vec<GRBVar>>>(T);
     for(int t = 0; t < T; ++t) {
-        y_diff[t] = vec<vec<GRBVar>>(C[L]);
+        y_abs[t] = vec<vec<GRBVar>>(C[L]);
         for(int j = 0; j < C[L]; ++j) {
-            y_diff[t][j] = vec<GRBVar>(2);
-            y_diff[t][j][0] = modelo.addVar(NULL, NULL, 0, GRB_CONTINUOUS, std::format("y_A_{}_{}", t, j));
-            y_diff[t][j][1] = modelo.addVar(NULL, NULL, 0, GRB_CONTINUOUS, std::format("y_B_{}_{}", t, j));
+            y_abs[t][j] = vec<GRBVar>(2);
+            y_abs[t][j][0] = modelo.addVar(NULL, NULL, 0, GRB_CONTINUOUS, std::format("y_A_{}_{}", t, j));
+            y_abs[t][j][1] = modelo.addVar(NULL, NULL, 0, GRB_CONTINUOUS, std::format("y_B_{}_{}", t, j));
         }
     }
-    return y_diff;
+    return y_abs;
 }
 
 auto error_variables(int T, int L, const vec<int>& C) {
@@ -138,26 +136,28 @@ auto bias_variables(int L, const vec<int>& C, const vec<vec<double>>& used_bias)
     return bias;
 }
 
-auto ReLU_layer_variables(int T, int L, const vec<int>& C, bool leaky = false) {
-    vec<vec<vec<GRBVar>>> RELU = vec<vec<vec<GRBVar>>>(C[k]);
+auto auxiliary_variables(int T, int L, const vec<int>& C, bool leaky = false) {
+    vec<vec<vec<vec<GRBVar>>>> aux(C[k]);
     for(int t = 0; t < T; ++t) {
-        RELU[t] = vec<vec<GRBVar>>(L);
+        aux[t] = vec<vec<vec<GRBVar>>>(L);
         for(int k = 0; k < L; ++k) {
-            RELU[t][k] = vec<GRBVar>(C[k + 1]);
+            aux[t][k] = vec<vec<GRBVar>>(C[k + 1]);
             for(int j = 0; j < C[k + 1]; ++j) {
-                RELU[t][k][j] = modelo.addVar(NULL, NULL, 0, GRB_CONTINUOUS, std::format("{}RELU_{}_{}_{}", (leaky ? "leaky_" : ""), t, k, j));
+                aux[t][k][j] = vec<GRBVar>(2);
+                aux[t][k][j][0] = modelo.addVar(NULL, NULL, 0, GRB_CONTINUOUS, std::format("aux_{}_{}_{}_A", t, k, j));
+                aux[t][k][j][1] = modelo.addVar(NULL, NULL, 0, GRB_CONTINUOUS, std::format("aux_{}_{}_{}_B", t, k, j));
             }
         }
     }
-    return RELU;
+    return aux;
 }
 
-void absolute_error_constraints(GRBModel& modelo, const vec<vec<GRBVar>>& e, const vec<vec<GRBVar>>& y, const vec<vec<vec<GRBVar>>>& y_diff, const vec<vec<GRBVar>>& e, int T, int L, const vec<int>& C, const vec<vec<double>>& ty) {
+void absolute_error_constraints(GRBModel& modelo, const vec<vec<GRBVar>>& e, const vec<vec<GRBVar>>& y, const vec<vec<vec<GRBVar>>>& y_abs, const vec<vec<GRBVar>>& e, int T, int L, const vec<int>& C, const vec<vec<double>>& ty) {
     for(int t = 0; t < T; ++t) {
         for(int j = 0; j < C[L]; ++j) {
-            modelo.addConstr(y_diff[t][j][0] == y[t][j] - ty[t][j], std::format("Difference_in_prediction_Neuron_{}_Case_{}", j, t));
-            modelo.addConstr(y_diff[t][j][1] == ty[t][j] - y[t][j], std::format("Difference_in_prediction_Neuron_{}_Case_{}", j, t));
-            modelo.addGenConstrMax(e[t][j], &y_diff[t][0], 2, 0, std::format("Absolute_Error_Restriction_Neuron_{}_Case_{}", j, t));
+            modelo.addConstr(y_abs[t][j][0] == y[t][j] - ty[t][j], std::format("Difference_in_prediction_Neuron_{}_Case_{}", j, t));
+            modelo.addConstr(y_abs[t][j][1] == ty[t][j] - y[t][j], std::format("Difference_in_prediction_Neuron_{}_Case_{}", j, t));
+            modelo.addGenConstrMax(e[t][j], &y_abs[t][0], 2, 0, std::format("Absolute_Error_Restriction_Neuron_{}_Case_{}", j, t));
         }
     }
 }
@@ -212,24 +212,57 @@ void output_layer_constraints(GRBModel& modelo, const vec<vec<vec<GRBVar>>>& a, 
     }
 }
 
-void ReLU_constraints(GRBModel& modelo, const vec<vec<vec<GRBVar>>>& z, const vec<vec<vec<GRBVar>>>& ReLU, const vec<vec<vec<GRBVar>>>& a) {
+void hardtanh_constraints(GRBModel& modelo, const vec<vec<vec<GRBVar>>>& z, const vec<vec<vec<vec<GRBVar>>>>& aux, const vec<vec<vec<GRBVar>>>& a, double min_value = 0, double max_value = 1) {
     for(int t = 0; t < T; ++t) {
         for(int k = 0; k < L; ++k) {
             for(int j = 0; j < C[k + 1]; ++j) {
-                modelo.addGenConstrMax(ReLU[t][k][j],&z[t][k][j],1,0, std::format("RELU_Layer_{}_Neuron_{}_Case_{}", k, j, t));
-                modelo.addConstr(a[t][k][j] == RELU[t][k][j], std::format("RELU_Layer_{}_Neuron_{}_Case_{}", k, j, t));
+                modelo.addGenConstrMin(aux[t][k][j][0],&z[t][k][j],1,max_value, std::format("Hardtanh_Layer_{}_Neuron_{}_Case_{}", k, j, t));
+                modelo.addGenConstrMax(a[t][k][j],&aux[t][k][j][0],1,min_value, std::format("Hardtanh_Layer_{}_Neuron_{}_Case_{}", k, j, t));
             }
         }
     }  
 }
 
-void Leaky_ReLU_constraints(GRBModel& modelo, const vec<vec<vec<GRBVar>>>& z, const vec<vec<vec<GRBVar>>>& ReLU, const vec<vec<vec<GRBVar>>>& Leaky_ReLU, const vec<vec<vec<GRBVar>>>& a, const vec<vec<double>>& negative_slope) {
+void hardsigmoid(GRBModel& modelo, const vec<vec<vec<GRBVar>>>& z, const vec<vec<vec<vec<GRBVar>>>>& aux, const vec<vec<vec<GRBVar>>>& a) {
     for(int t = 0; t < T; ++t) {
         for(int k = 0; k < L; ++k) {
             for(int j = 0; j < C[k + 1]; ++j) {
-                modelo.addGenConstrMax(ReLU[t][k][j],&z[t][k][j],1,0, std::format("RELU_Layer_{}_Neuron_{}_Case_{}", k, j, t));
-                modelo.addGenConstrMin(Leaky_RELU[t][k][i],&z[t][k][i],1,0, std::format("Leaky_RELU_Layer_{}_Neuron_{}_Case_{}", k, j, t));
-                modelo.addConstr(a[t][k][j] == RELU[t][k][j] + negative_slope[k][j] * Leaky_RELU[t][k][j], std::format("Leaky_RELU_Layer_{}_Neuron_{}_Case_{}", k, j, t));
+                modelo.addConstr(aux[t][k][j][0] == z[t][k][j] / 6 + 0.5, std::format("Hardsigmoid_Layer_{}_Neuron_{}_Case_{}", k, j, t));
+                modelo.addGenConstrMin(aux[t][k][j][1],&aux[t][k][j][0],1,1, std::format("Hardsigmoid_Layer_{}_Neuron_{}_Case_{}", k, j, t));
+                modelo.addGenConstrMax(a[t][k][j],&aux[t][k][j][1],1,0, std::format("Hardsigmoid_Layer_{}_Neuron_{}_Case_{}", k, j, t));
+            }
+        }
+    }  
+}
+
+void ReLU6_constraints(GRBModel& modelo, const vec<vec<vec<GRBVar>>>& z, const vec<vec<vec<vec<GRBVar>>>>& aux, const vec<vec<vec<GRBVar>>>& a) {
+    for(int t = 0; t < T; ++t) {
+        for(int k = 0; k < L; ++k) {
+            for(int j = 0; j < C[k + 1]; ++j) {
+                modelo.addGenConstrMax(aux[t][k][j][0],&z[t][k][j],1,0, std::format("RELU6_Layer_{}_Neuron_{}_Case_{}", k, j, t));
+                modelo.addGenConstrMin(a[t][k][j],&a[t][k][i][0],1,6, std::format("RELU6_Layer_{}_Neuron_{}_Case_{}", k, j, t));
+            }
+        }
+    }  
+}
+
+void ReLU_constraints(GRBModel& modelo, const vec<vec<vec<GRBVar>>>& z, const vec<vec<vec<vec<GRBVar>>>>& aux, const vec<vec<vec<GRBVar>>>& a) {
+    for(int t = 0; t < T; ++t) {
+        for(int k = 0; k < L; ++k) {
+            for(int j = 0; j < C[k + 1]; ++j) {
+                modelo.addGenConstrMax(a[t][k][j],&z[t][k][j],1,0, std::format("RELU_Layer_{}_Neuron_{}_Case_{}", k, j, t));
+            }
+        }
+    }  
+}
+
+void Leaky_ReLU_constraints(GRBModel& modelo, const vec<vec<vec<GRBVar>>>& z, const vec<vec<vec<vec<GRBVar>>>>& aux, const vec<vec<vec<GRBVar>>>& a, const vec<vec<double>>& negative_slope) {
+    for(int t = 0; t < T; ++t) {
+        for(int k = 0; k < L; ++k) {
+            for(int j = 0; j < C[k + 1]; ++j) {
+                modelo.addGenConstrMax(aux[t][k][j][0],&z[t][k][j],1,0, std::format("Leaky_RELU_Layer_{}_Neuron_{}_Case_{}", k, j, t));
+                modelo.addGenConstrMin(aux[t][k][i][1],&z[t][k][i],1,0, std::format("Leaky_RELU_Layer_{}_Neuron_{}_Case_{}", k, j, t));
+                modelo.addConstr(a[t][k][j] == aux[t][k][j][0] + negative_slope[k][j] * aux[t][k][j][1], std::format("Leaky_RELU_Layer_{}_Neuron_{}_Case_{}", k, j, t));
             }
         }
     }  
@@ -277,17 +310,14 @@ void input_layer_constraints(GRBModel& modelo, const vec<vec<vec<GRBVar>>>& a, c
     }
 }
 
-GRBModel get_model(const GRBEnv& environment, int T, int L, const vec<int>& C, int D, const vec<vec<double>>& tx, const vec<vec<double>>& ty, const vec<vec<double>> coef, const vec<double>& bias_w, bool leaky = false, const vec<vec<double>>& negative_slope = vec<vec<double>>()) {
+GRBModel get_model(const GRBEnv& environment, int T, int L, const vec<int>& C, int D, const vec<vec<double>>& tx, const vec<vec<double>>& ty, const vec<vec<double>> coef, const vec<double>& bias_w) {
     GRBModel model(environment);
     GRBVar J = model.addVar(NULL, NULL, 0, GRB_CONTINUOUS, std::format("J"));
     auto E = total_error_variables(T);
     auto e = error_variables(T,L,C);
-    auto y_diff = abs_error_variables(T,L,C);
+    auto y_abs = abs_error_variables(T,L,C);
     auto y = output_variables(T,L,C);
-    auto RELU = ReLU_layer_variables(T,L,C,false);
-    if(leaky) {
-        auto Leaky_ReLU = Leaky_ReLU_variables(T,L,C);
-    }
+    auto aux = auxiliary_variables(T,L,C);
     auto z = linear_activation_variables(T,L,C);
     auto bw = pounded_activation_variables(T,L,C,D);
     auto b = layer_binary_variables(L,C,D);
@@ -298,14 +328,9 @@ GRBModel get_model(const GRBEnv& environment, int T, int L, const vec<int>& C, i
     sum_error_objective(model,J,E,e,T,L,C);
     //max_error_objective(model,J,E,e,T,L,C);
     //max_total_error_objective(model,J,E,e,T,L,C);
-    absolute_error_constraints(model,e,y_diff,y,T,L,C,ty);
+    absolute_error_constraints(model,e,y_abs,y,T,L,C,ty);
     output_layer_constraints(model,a,y,T,L,C);
-    if(leaky) {
-        Leaky_ReLU_constraints(model,z,ReLU,Leaky_ReLU,a,T,L,C,negative_slope);
-    }
-    else {
-        ReLU_constraints(model,z,ReLU,a,T,L,C);
-    }
+    ReLU_constraints(model,z,aux,a,T,L,C);
     bias_constraints(model,bias,a,T,L,C);
     binary_constraints(model,b,bw,a,z,T,L,C,D,coef);
     input_layer_constraints(model,a,x,T,C);
