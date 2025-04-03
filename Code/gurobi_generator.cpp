@@ -272,6 +272,7 @@ void binary_constraints(GRBModel& model, const vec<vec<vec<vec<GRBVar>>>>& b, co
             for(int j = 0; j < C[k + 1]; ++j) {
                for(int l = 0; l <= D; ++l) {
                   model.addGenConstrIndicator(b[k][i][j][l], 1, std::exp2(l - precis[k][i][j]) * a[t][k][i] - bw[t][k][i][j][l], GRB_EQUAL, 0, format("L{}_W{}{}_D{}_Descomp_Case_{}",k,i,j,l,t));
+                  model.addGenConstrIndicator(b[k][i][j][l], 0, bw[t][k][i][j][l], GRB_EQUAL, 0, format("L{}_W{}{}_D{}_Descomp_Case_{}",k,i,j,l,t));
                }
             }
          }
