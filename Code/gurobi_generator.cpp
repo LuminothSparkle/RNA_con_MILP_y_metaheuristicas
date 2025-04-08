@@ -5,24 +5,30 @@
 #include <cmath>
 #include <fstream>
 #include <filesystem>
+#include <string>
+#include <algorithm>
+#include <sstream>
+#include <utility>
 
 namespace fsys = std::filesystem;
 using std::fstream;
 using fsys::path;
 using std::format;
+using std::string;
+using std::stringstream;
 
 template<typename T>
 using vec = std::vector<T>;
 
-auto layer_binary_variables(GRBModel& model, int L, const vec<int>& C, int D) {
+auto layer_binary_variables(GRBModel& model, int L, const vec<int>& C, const vec<vec<vec<int>>>& D) {
    vec<vec<vec<vec<GRBVar>>>> b(L);
    for(int k = 0; k < L; ++k) {
       b[k] = vec<vec<vec<GRBVar>>>(C[k] + 1);
       for(int i = 0; i <= C[k]; ++i) {
          b[k][i] = vec<vec<GRBVar>>(C[k + 1]);
          for(int j = 0; j < C[k + 1]; ++j) {
-            b[k][i][j] = vec<GRBVar>(D + 1);
-            for(int l = 0; l <= D; ++l) {
+            b[k][i][j] = vec<GRBVar>(D[k][i][j] + 1);
+            for(int l = 0; l <= D[k][i][j]; ++l) {
                b[k][i][j][l] = model.addVar(0, 1, 0, GRB_BINARY, format("b_{}_{}_{}_{}",  k, i, j, l));
             }
          }
@@ -31,7 +37,7 @@ auto layer_binary_variables(GRBModel& model, int L, const vec<int>& C, int D) {
    return b;
 }
 
-auto pounded_activation_variables(GRBModel& model, int T, int L, const vec<int>& C, int D) {
+auto pounded_activation_variables(GRBModel& model, int T, int L, const vec<int>& C, const vec<vec<vec<int>>>& D) {
    vec<vec<vec<vec<vec<GRBVar>>>>> bw(T);
    for(int t = 0; t < T; ++t) {
       bw[t] = vec<vec<vec<vec<GRBVar>>>>(L);
@@ -40,8 +46,8 @@ auto pounded_activation_variables(GRBModel& model, int T, int L, const vec<int>&
          for(int i = 0; i <= C[k]; ++i) {
             bw[t][k][i] = vec<vec<GRBVar>>(C[k + 1]);
             for(int j = 0; j < C[k + 1]; ++j) {
-               bw[t][k][i][j] = vec<GRBVar>(D + 1);
-               for(int l = 0; l <= D; ++l) {
+               bw[t][k][i][j] = vec<GRBVar>(D[k][i][j] + 1);
+               for(int l = 0; l <= D[k][i][j]; ++l) {
                   bw[t][k][i][j][l] = model.addVar(-GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS, format("bw_{}_{}_{}_{}_{}", t, k, i, j, l));
                }
             }
@@ -139,7 +145,7 @@ auto bias_variables(GRBModel& model, int L, const vec<double>& used_bias) {
    return bias;
 }
 
-auto auxiliary_variables(GRBModel& model, int T, int L, const vec<int>& C, bool leaky = false) {
+auto auxiliary_variables(GRBModel& model, int T, int L, const vec<int>& C) {
    vec<vec<vec<vec<GRBVar>>>> aux(T);
    for(int t = 0; t < T; ++t) {
       aux[t] = vec<vec<vec<GRBVar>>>(L);
@@ -201,58 +207,48 @@ void output_layer_constraints(GRBModel& model, const vec<vec<vec<GRBVar>>>& a, c
    }
 }
 
-void hardtanh_constraints(GRBModel& model, const vec<vec<vec<GRBVar>>>& z, const vec<vec<vec<vec<GRBVar>>>>& aux, const vec<vec<vec<GRBVar>>>& a, int T, int L, const vec<int>& C, double min_value = 0, double max_value = 1) {
+void hardtanh_constraints(GRBModel& model, const vec<vec<vec<GRBVar>>>& z, const vec<vec<vec<vec<GRBVar>>>>& aux, const vec<vec<vec<GRBVar>>>& a, int T, int k, const vec<int>& C, double min_value = 0, double max_value = 1) {
    for(int t = 0; t < T; ++t) {
-      for(int k = 0; k < L; ++k) {
-         for(int j = 0; j < C[k + 1]; ++j) {
-            model.addGenConstrMin(aux[t][k][j][0], &z[t][k][j], 1, max_value, format("L{}_Neu{}_Hardtanh_Case_{}", k, j, t));
-            model.addGenConstrMax(a[t][k + 1][j], &aux[t][k][j][0], 1, min_value, format("L{}_Neu{}_Hardtanh_Case_{}", k, j, t));
-         }
+      for(int j = 0; j < C[k + 1]; ++j) {
+         model.addGenConstrMin(aux[t][k][j][0], &z[t][k][j], 1, max_value, format("L{}_Neu{}_Hardtanh_Case_{}", k, j, t));
+         model.addGenConstrMax(a[t][k + 1][j], &aux[t][k][j][0], 1, min_value, format("L{}_Neu{}_Hardtanh_Case_{}", k, j, t));
       }
    }  
 }
 
-void hardsigmoid(GRBModel& model, const vec<vec<vec<GRBVar>>>& z, const vec<vec<vec<vec<GRBVar>>>>& aux, const vec<vec<vec<GRBVar>>>& a, int T, int L, const vec<int>& C) {
+void hardsigmoid_constraints(GRBModel& model, const vec<vec<vec<GRBVar>>>& z, const vec<vec<vec<vec<GRBVar>>>>& aux, const vec<vec<vec<GRBVar>>>& a, int T, int k, const vec<int>& C) {
    for(int t = 0; t < T; ++t) {
-      for(int k = 0; k < L; ++k) {
-         for(int j = 0; j < C[k + 1]; ++j) {
-            model.addConstr(z[t][k][j] / 6 + 0.5, GRB_EQUAL, aux[t][k][j][0], format("L{}_Neu{}_Hardsigmoid_Case_{}", k, j, t));
-            model.addGenConstrMin(aux[t][k][j][1],&aux[t][k][j][0],1,1, format("L{}_Neu{}_Hardsigmoid_Case_{}", k, j, t));
-            model.addGenConstrMax(a[t][k + 1][j],&aux[t][k][j][1],1,0, format("L{}_Neu{}_Hardsigmoid_Case_{}", k, j, t));
-         }
+      for(int j = 0; j < C[k + 1]; ++j) {
+         model.addConstr(z[t][k][j] / 6 + 0.5, GRB_EQUAL, aux[t][k][j][0], format("L{}_Neu{}_Hardsigmoid_Case_{}", k, j, t));
+         model.addGenConstrMin(aux[t][k][j][1],&aux[t][k][j][0],1,1, format("L{}_Neu{}_Hardsigmoid_Case_{}", k, j, t));
+         model.addGenConstrMax(a[t][k + 1][j],&aux[t][k][j][1],1,0, format("L{}_Neu{}_Hardsigmoid_Case_{}", k, j, t));
       }
    }  
 }
 
-void ReLU6_constraints(GRBModel& model, const vec<vec<vec<GRBVar>>>& z, const vec<vec<vec<vec<GRBVar>>>>& aux, const vec<vec<vec<GRBVar>>>& a, int T, int L, const vec<int>& C) {
+void ReLU6_constraints(GRBModel& model, const vec<vec<vec<GRBVar>>>& z, const vec<vec<vec<vec<GRBVar>>>>& aux, const vec<vec<vec<GRBVar>>>& a, int T, int k, const vec<int>& C) {
    for(int t = 0; t < T; ++t) {
-      for(int k = 0; k < L; ++k) {
-         for(int j = 0; j < C[k + 1]; ++j) {
-            model.addGenConstrMax(aux[t][k][j][0],&z[t][k][j],1,0, format("RELU6_Layer_{}_Neuron_{}_Case_{}", k, j, t));
-            model.addGenConstrMin(a[t][k + 1][j],&aux[t][k][j][0],1,6, format("RELU6_Layer_{}_Neuron_{}_Case_{}", k, j, t));
-         }
+      for(int j = 0; j < C[k + 1]; ++j) {
+         model.addGenConstrMax(aux[t][k][j][0],&z[t][k][j],1,0, format("RELU6_Layer_{}_Neuron_{}_Case_{}", k, j, t));
+         model.addGenConstrMin(a[t][k + 1][j],&aux[t][k][j][0],1,6, format("RELU6_Layer_{}_Neuron_{}_Case_{}", k, j, t));
       }
    }  
 }
 
-void ReLU_constraints(GRBModel& model, const vec<vec<vec<GRBVar>>>& z, const vec<vec<vec<vec<GRBVar>>>>& aux, const vec<vec<vec<GRBVar>>>& a, int T, int L, const vec<int>& C) {
+void ReLU_constraints(GRBModel& model, const vec<vec<vec<GRBVar>>>& z, const vec<vec<vec<vec<GRBVar>>>>& aux, const vec<vec<vec<GRBVar>>>& a, int T, int k, const vec<int>& C) {
    for(int t = 0; t < T; ++t) {
-      for(int k = 0; k < L; ++k) {
-         for(int j = 0; j < C[k + 1]; ++j) {
-            model.addGenConstrMax(a[t][k + 1][j],&z[t][k][j],1,0, format("L{}_Neu{}_ReLU_Case_{}", k + 1, j, t));
-         }
+      for(int j = 0; j < C[k + 1]; ++j) {
+         model.addGenConstrMax(a[t][k + 1][j],&z[t][k][j],1,0, format("L{}_Neu{}_ReLU_Case_{}", k + 1, j, t));
       }
    }  
 }
 
-void Leaky_ReLU_constraints(GRBModel& model, const vec<vec<vec<GRBVar>>>& z, const vec<vec<vec<vec<GRBVar>>>>& aux, const vec<vec<vec<GRBVar>>>& a, int T, int L, const vec<int>& C, const vec<vec<double>>& negative_slope) {
+void Leaky_ReLU_constraints(GRBModel& model, const vec<vec<vec<GRBVar>>>& z, const vec<vec<vec<vec<GRBVar>>>>& aux, const vec<vec<vec<GRBVar>>>& a, int T, int k, const vec<int>& C, const vec<double>& negative_slope) {
    for(int t = 0; t < T; ++t) {
-      for(int k = 0; k < L; ++k) {
-         for(int j = 0; j < C[k + 1]; ++j) {
-            model.addGenConstrMax(aux[t][k][j][0],&z[t][k][j],1,0, std::format("L{}_Neu{}_Leaky_ReLU_Case_{}", k, j, t));
-            model.addGenConstrMin(aux[t][k][j][1],&z[t][k][j],1,0, std::format("L{}_Neu{}_Leaky_ReLU_Case_{}", k, j, t));
-            model.addConstr(a[t][k + 1][j] == aux[t][k][j][0] + negative_slope[k][j] * aux[t][k][j][1], std::format("L{}_Neu{}_Leaky_ReLU_Case_{}", k, j, t));
-         }
+      for(int j = 0; j < C[k + 1]; ++j) {
+         model.addGenConstrMax(aux[t][k][j][0],&z[t][k][j],1,0, std::format("L{}_Neu{}_Leaky_ReLU_Case_{}", k, j, t));
+         model.addGenConstrMin(aux[t][k][j][1],&z[t][k][j],1,0, std::format("L{}_Neu{}_Leaky_ReLU_Case_{}", k, j, t));
+         model.addConstr(a[t][k + 1][j] == aux[t][k][j][0] + negative_slope[k] * aux[t][k][j][1], std::format("L{}_Neu{}_Leaky_ReLU_Case_{}", k, j, t));
       }
    }  
 }
@@ -265,13 +261,13 @@ void bias_constraints(GRBModel& model, const vec<GRBVar>& layer_bias, const vec<
    }
 }
 
-void binary_constraints(GRBModel& model, const vec<vec<vec<vec<GRBVar>>>>& b, const vec<vec<vec<vec<vec<GRBVar>>>>>& bw, const vec<vec<vec<GRBVar>>>& a, const vec<vec<vec<GRBVar>>>& z, int T, int L, const vec<int>& C, int D, const vec<vec<vec<int>>>& precis) {
+void binary_constraints(GRBModel& model, const vec<vec<vec<vec<GRBVar>>>>& b, const vec<vec<vec<vec<vec<GRBVar>>>>>& bw, const vec<vec<vec<GRBVar>>>& a, const vec<vec<vec<GRBVar>>>& z, int T, int L, const vec<int>& C, const vec<vec<vec<int>>>& D, const vec<vec<vec<int>>>& precis) {
    for(int t = 0; t < T; ++t) {
       for(int k = 0; k < L; ++k) {
          for(int i = 0; i <= C[k]; ++i) {
             for(int j = 0; j < C[k + 1]; ++j) {
-               for(int l = 0; l <= D; ++l) {
-                  model.addGenConstrIndicator(b[k][i][j][l], 1, std::exp2(l - precis[k][i][j]) * a[t][k][i] - bw[t][k][i][j][l], GRB_EQUAL, 0, format("L{}_W{}{}_D{}_Descomp_Case_{}",k,i,j,l,t));
+               for(int l = 0; l <= D[k][i][j]; ++l) {
+                  model.addGenConstrIndicator(b[k][i][j][l], 1, std::exp2(precis[k][i][j] - l) * a[t][k][i] - bw[t][k][i][j][l], GRB_EQUAL, 0, format("L{}_W{}{}_D{}_Descomp_Case_{}",k,i,j,l,t));
                   model.addGenConstrIndicator(b[k][i][j][l], 0, bw[t][k][i][j][l], GRB_EQUAL, 0, format("L{}_W{}{}_D{}_Descomp_Case_{}",k,i,j,l,t));
                }
             }
@@ -283,10 +279,10 @@ void binary_constraints(GRBModel& model, const vec<vec<vec<vec<GRBVar>>>>& b, co
          for(int j = 0; j < C[k + 1]; ++j) {
             GRBLinExpr neuron_linear_expr;
             for(int i = 0; i <= C[k]; ++i) {
-               for(int l = 0; l < D; ++l) {
+               for(int l = 0; l < D[k][i][j]; ++l) {
                   neuron_linear_expr += bw[t][k][i][j][l];
                }
-               neuron_linear_expr -= bw[t][k][i][j][D];
+               neuron_linear_expr -= bw[t][k][i][j][D[k][i][j]];
             }
             model.addConstr(neuron_linear_expr, GRB_EQUAL, z[t][k][j], format("Lin_Output_L{}_Neu{}_Case_{}",k,j,t));
          }
@@ -302,7 +298,7 @@ void input_layer_constraints(GRBModel& model, const vec<vec<vec<GRBVar>>>& a, co
    }
 }
 
-GRBModel get_model(const GRBEnv& environment, int T, int L, const vec<int>& C, int D, const vec<vec<double>>& tx, const vec<vec<double>>& ty, const vec<vec<vec<int>>>& precis, const vec<double>& bias_w) {
+GRBModel get_model(const GRBEnv& environment, int T, int L, const vec<int>& C, const vec<string>& AF, const vec<vec<vec<int>>>& D, const vec<vec<double>>& tx, const vec<vec<double>>& ty, const vec<vec<vec<int>>>& precis, const vec<double>& bias_w, const vec<double>& negative_slope, int optim_opt = 0) {
    GRBModel model(environment);
    GRBVar J = model.addVar(0, GRB_INFINITY, 0, GRB_CONTINUOUS, format("J"));
    auto E = total_error_variables(model,T);
@@ -318,93 +314,212 @@ GRBModel get_model(const GRBEnv& environment, int T, int L, const vec<int>& C, i
    auto x = input_variables(model,T,C,tx);
    model.setObjective(GRBLinExpr(J), GRB_MINIMIZE); 
 
-   sum_error_constraints(model,J,E,e,T,L,C);
-   //max_error_objective(model,J,E,e,T,L,C);
-   //max_total_error_objective(model,J,E,e,T,L,C);
+   switch(optim_opt) {
+      case 1 :
+         max_total_error_objective(model,J,E,e,T,L,C);
+         break;
+      case 2 :
+         max_error_objective(model,J,E,e,T,L,C);
+         break;
+      default :
+         sum_error_constraints(model,J,E,e,T,L,C);
+   }
    absolute_error_constraints(model,e,y,dy,T,L,C,ty);
    output_layer_constraints(model,a,y,T,L,C);
-   ReLU_constraints(model,z,aux,a,T,L,C);
-   //ReLU6_constraints(model,z,aux,a,T,L,C);
-   //Leaky_ReLU_constraints(model,z,aux,a,T,L,C,negative_slope);
-   //hardtanh_constraints(model,z,aux,a,T,L,C,-1,1);
-   //hardsigmoid_constraints(model,z,aux,a,T,L,C);
+   for(int k = 0; k < L; ++k) {
+      if(AF[k].compare("ReLU") == 0) {
+         ReLU_constraints(model,z,aux,a,T,k,C);
+      }
+      else if(AF[k].compare("ReLU6") == 0) {
+         ReLU6_constraints(model,z,aux,a,T,k,C);
+      }
+      else if(AF[k].compare("Leaky_ReLU") == 0) {
+         Leaky_ReLU_constraints(model,z,aux,a,T,k,C,negative_slope);
+      }
+      else if(AF[k].compare("Hardtanh") == 0) {
+         hardtanh_constraints(model,z,aux,a,T,k,C,-1,1);
+      }
+      else if(AF[k].compare("Hardsigmoid") == 0) {
+         hardsigmoid_constraints(model,z,aux,a,T,k,C);
+      }
+      else {
+         ReLU_constraints(model,z,aux,a,T,k,C);
+      }
+   }
    bias_constraints(model,bias,a,T,L,C);
    binary_constraints(model,b,bw,a,z,T,L,C,D,precis);
    input_layer_constraints(model,a,x,T,C);
    return model;
 }
 
-int main(int argc, const char* argv[]) try {
-   // lectura de la entrada
-   path arch_path(argv[1]);
-   path database_path(argv[2]);
-   path labels_path(argv[3]);
-
-   fstream arch_stream(arch_path);
-   int T;
-   arch_stream >> T;
-   int L;
-   arch_stream >> L;
-   vec<int> C(L + 1);
-   for(auto& layer_input : C) {
-      arch_stream >> layer_input;
+auto read_fmatrix(const path& matrix_path) {
+   fstream matrix_stream(matrix_path);
+   string line, word;
+   vec<vec<double>> matrix;
+   std::getline(matrix_stream, line);
+   while(std::getline(matrix_stream, line)) {
+      stringstream line_stream(line);
+      vec<double> row;
+      std::getline(line_stream, word, ',');
+      while(std::getline(line_stream, word, ',')) {
+         row.push_back(std::stod(word));
+      }
+      matrix.push_back(row);
    }
+   return matrix;
+}
 
-   vec<vec<vec<int>>> precis(L);
-   for(int k = 0; k < L; ++k) {
-      precis[k] = vec<vec<int>>(C[k] + 1);
-      for(auto& expon_layer : precis[k]) {
-         expon_layer = vec<int>(C[k + 1]);
-         for(auto& expon : expon_layer) {
-            expon = 1;
+std::pair<vec<int>,vec<string>> process_arch(const vec<std::pair<int,string>>& arch, int C_0, int C_L) {
+   int L = arch.size();
+   vec<int> C(L + 1);
+   vec<string> AF(L);
+   std::transform(arch.begin(),arch.end() - 1,C.begin() + 1,[](const std::pair<int,string>& p) { return p.first; });
+   C[0] = C_0;
+   C[L] = C_L;
+   std::transform(arch.begin(),arch.end(),AF.begin(),[](const std::pair<int,string>& p) { return p.second; });
+   return {C, AF};
+}
+
+auto read_slope(const path& arch_path) {
+   fstream arch_stream(arch_path);
+   string line, word;
+   vec<double> negative_slope;
+   std::getline(arch_stream, line);
+   while(std::getline(arch_stream, line)) {
+      stringstream line_stream(line);
+      try {
+         std::getline(line_stream, word, ',');
+         std::getline(line_stream, word, ',');
+         std::getline(line_stream, word, ',');
+         if(std::getline(line_stream, word, ',')) {
+            negative_slope.push_back(std::stod(word));
+         }
+         else {
+            negative_slope.push_back(0);
          }
       }
-   }
-
-   fstream database_stream(database_path);
-   vec<vec<double>> tx(T);
-   for(auto& tcase : tx) {
-      tcase = vec<double>(C[0]);
-      for(auto& attribute : tcase) {
-         database_stream >> attribute;
+      catch(const std::invalid_argument& e) {
+         negative_slope.push_back(0);
       }
    }
+   return negative_slope;
+}
 
-   fstream labels_stream(labels_path);
-   vec<vec<double>> ty(T);
-   for(auto& tcase : ty) {
-      tcase = vec<double>(C[L]);
-      for(auto& attribute : tcase) {
-         labels_stream >> attribute;
+auto read_arch(const path& arch_path) {
+   fstream arch_stream(arch_path);
+   string line, word;
+   vec<std::pair<int,string>> arch;
+   std::getline(arch_stream, line);
+   while(std::getline(arch_stream, line)) {
+      stringstream line_stream(line);
+      std::pair<int,string> layer;
+      std::getline(line_stream, word, ',');
+      try {
+         std::getline(line_stream, word, ',');
+         layer.first = std::stoi(word);
       }
+      catch(const std::invalid_argument& e) {
+         layer.first = -1;
+      }
+      std::getline(line_stream, word, ',');
+      layer.second = word;
+      arch.push_back(layer);
    }
-   vec<double> bias_w(L,1);
-   int D = 16;
-   
+   return arch;
+}
+
+auto read_imatrix_list(const path& list_path) {
+   fstream list_stream(list_path);
+   string line, word;
+   vec<vec<vec<int>>> list;
+   std::getline(list_stream, line);
+   while(std::getline(list_stream, line)) {
+      stringstream line_stream(line);
+      std::getline(line_stream, word, ',');
+      std::getline(line_stream, word, ',');
+      int n = std::stoi(word);
+      std::getline(line_stream, word, ',');
+      int m = std::stoi(word);
+      vec<vec<int>> matrix(n,vec<int>(m));
+      for(int i = 0; i < n; ++i) {
+         for(int j = 0; j < m; ++j) {
+            std::getline(line_stream, word, ',');
+            matrix[i][j] = std::stoi(word);
+         }
+      }
+      list.push_back(matrix);
+   }
+   return list;
+}
+
+auto read_fvector(const path& vector_path) {
+   fstream vector_stream(vector_path);
+   string line, word;
+   vec<double> vector;
+   std::getline(vector_stream, line);
+   while(std::getline(vector_stream, line)) {
+      stringstream line_stream(line);
+      std::getline(line_stream, word, ',');
+      std::getline(line_stream, word, ',');
+      vector.push_back(std::stod(word));
+   }
+   return vector;
+}
+
+int main(int argc, const char* argv[]) try {
+   // lectura de la entrada
+   if(argc < 7) 
+      return 0;
+   path arch_path(argv[1]);
+   path cases_path(argv[2]);
+   path labels_path(argv[3]);
+   path precision_path(argv[4]);
+   path digits_path(argv[5]);
+   path bias_path(argv[6]);
+   string opt;
+   if(argc >= 8) {
+      opt = argv[7];
+   }
+   else {
+      opt = "LP";
+   }
+
+   auto arch = read_arch(arch_path);
+   auto cases = read_fmatrix(cases_path);
+   auto labels = read_fmatrix(labels_path);
+   auto precision = read_imatrix_list(precision_path);
+   auto digits = read_imatrix_list(digits_path);
+   auto bias = read_fvector(bias_path);
+   auto negative_slope = read_slope(arch_path);
+   int T = cases.size(), L = arch.size();
+   int C_0 = cases[0].size(), C_L = labels[0].size();
+   auto [C, AF] = process_arch(arch,C_0,C_L);
+
    // construcción del modelo
    
    GRBEnv ambiente;
-   GRBModel modelo = get_model(ambiente,T,L,C,D,tx,ty,precis,bias_w);
+   GRBModel modelo = get_model(ambiente,T,L,C,AF,digits,cases,labels,precision,bias,negative_slope);
    
-   // ------ resolución del modelo
-   modelo.optimize( );
-   modelo.write(path(format("model.lp")));       // se puede quitar en caso de no desear generar el modelo en formato LP
-   
-   /**/
-   if (modelo.get(GRB_IntAttr_Status) == GRB_OPTIMAL) {
-      std::cout << "Solución encontrada\n";
-      // ... examinar la solución en caso de requerirlo
-      modelo.write(format("{}.sol", argv[0]));   // se puede quitar en caso de no desear generar el archivo .sol
-   } else if (modelo.get(GRB_IntAttr_Status) == GRB_UNBOUNDED) {
-      std::cout << "Modelo no acotado\n";
-   } else if (modelo.get(GRB_IntAttr_Status) == GRB_INFEASIBLE) {
-      std::cout << "Modelo infactible\n";
-      modelo.computeIIS( );
-      modelo.write(format("{}.ilp", argv[0]));
-   } else {
-      std::cout << "Estado no manejado\n";
+   if(opt == "LP") {
+      modelo.write(path(format("model.lp")));       // se puede quitar en caso de no desear generar el modelo en formato LP
    }
-   /**/
+   else if(opt == "SOL") {
+      // ------ resolución del modelo
+      modelo.optimize( );
+      if (modelo.get(GRB_IntAttr_Status) == GRB_OPTIMAL) {
+         std::cout << "Solución encontrada\n";
+         // ... examinar la solución en caso de requerirlo
+         modelo.write(path(format("model.sol")));   // se puede quitar en caso de no desear generar el archivo .sol
+      } else if (modelo.get(GRB_IntAttr_Status) == GRB_UNBOUNDED) {
+         std::cout << "Modelo no acotado\n";
+      } else if (modelo.get(GRB_IntAttr_Status) == GRB_INFEASIBLE) {
+         std::cout << "Modelo infactible\n";
+         modelo.computeIIS( );
+         modelo.write(path(format("model.ilp")));
+      } else {
+         std::cout << "Estado no manejado\n";
+      }
+   }
 } catch (const GRBException& ex) {
    std::cout << ex.getMessage( ) << "\n";
 }

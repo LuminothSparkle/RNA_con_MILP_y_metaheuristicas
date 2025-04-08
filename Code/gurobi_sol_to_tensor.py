@@ -19,7 +19,7 @@ with open(sol_path, mode = 'rt', encoding = 'utf-8') as fo :
         if name.startswith('b_') :
             value = float(value)
             k,i,j,l = [ int(string) for string in name.lstrip('b_').split('_') ]
-            w[k][i][j] += value * math.exp2(l - precis)
+            w[k][i][j] += value * math.exp2(precis - l)
 with open(save_file_path, mode = 'wt', encoding = 'utf-8') as fo :
     sys.stdout = fo
     for layer in w :
@@ -27,4 +27,3 @@ with open(save_file_path, mode = 'wt', encoding = 'utf-8') as fo :
             print(*rows)
         print('___')
     sys.stdout = sys.__stdout__
-

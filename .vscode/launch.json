@@ -1,5 +1,6 @@
 {
   "version": "0.2.0",
+  "env": {"PYTHONPATH": "${workspaceRoot}"},
   "configurations": [
     {
       "name": "C/C++ Runner: Debug Session",
