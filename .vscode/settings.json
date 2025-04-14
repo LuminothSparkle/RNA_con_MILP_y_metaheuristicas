@@ -1,5 +1,4 @@
 {
-  
   "files.associations": {
     "*.sqlbook": "sql",
     "*.ndjson": "jsonl",
@@ -55,7 +54,27 @@
     "xmemory": "cpp",
     "xtr1common": "cpp",
     "random": "cpp",
-    "*.tcc": "cpp"
+    "*.tcc": "cpp",
+    "array": "cpp",
+    "codecvt": "cpp",
+    "cwctype": "cpp",
+    "deque": "cpp",
+    "string": "cpp",
+    "unordered_map": "cpp",
+    "algorithm": "cpp",
+    "functional": "cpp",
+    "memory_resource": "cpp",
+    "numeric": "cpp",
+    "optional": "cpp",
+    "ratio": "cpp",
+    "string_view": "cpp",
+    "fstream": "cpp",
+    "iomanip": "cpp",
+    "numbers": "cpp",
+    "span": "cpp",
+    "sstream": "cpp",
+    "variant": "cpp",
+    "any": "cpp"
   },
   "C_Cpp.vcFormat.space.betweenEmptySquareBrackets": true,
   "C_Cpp.vcFormat.space.betweenEmptyParameterListParentheses": true,

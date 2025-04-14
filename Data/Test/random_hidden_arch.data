@@ -1,4 +1,0 @@
-Layer,Activation Function,Neurons
-0,Leaky_ReLU,4
-1,Hardsigmoid,4
-2,Hardtanh,
