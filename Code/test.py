@@ -87,7 +87,7 @@ if __name__ == '__main__' :
                 tlib.save_LVDB(b,bias_path, dtype = 'Float64')
                 tlib.save_LVDB(prelu, prelu_path, dtype = 'Float64') # type: ignore
                 tlib.save_TDB(pred,prediction_path)
-                print(f'best test loss : {best_train[1]}', file = text_file)
+                print(f'best train loss : {best_train[1]}', file = text_file)
         if best_all is not None :
             module = results[best_all[0]][2]
             with torch.no_grad() :
@@ -106,7 +106,7 @@ if __name__ == '__main__' :
                 tlib.save_LVDB(b,bias_path, dtype = 'Float64')
                 tlib.save_LVDB(prelu, prelu_path, dtype = 'Float64') # type: ignore
                 tlib.save_TDB(pred,prediction_path)
-                print(f'best test loss : {best_all[1]}', file = text_file)
+                print(f'best all loss : {best_all[1]}', file = text_file)
 
     #x_0 = NNF.NN_Architecture(hidden_C,C_0,C_L,phi)
     #y_0 = arch_opt(x_0)
