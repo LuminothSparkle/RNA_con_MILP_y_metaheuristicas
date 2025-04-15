@@ -152,5 +152,12 @@
   "python.analysis.typeCheckingMode": "standard",
   "python.analysis.typeEvaluation.deprecateTypingAliases": true,
   "python.analysis.typeEvaluation.enableReachabilityAnalysis": true,
-  "python.analysis.typeEvaluation.disableBytesTypePromotions": false
+  "python.analysis.typeEvaluation.disableBytesTypePromotions": false,
+  "python.linting.pylintEnabled": true,
+    "python.linting.enabled": true,
+    "python.linting.pylintArgs": [
+        "--rcfile",
+        "${workspaceFolder}/backend/.pylintrc"
+    ],
+    "C_Cpp.errorSquiggles": "disabled",
 }

@@ -1,4 +1,5 @@
 import torch
+from math import exp
 
 def simulated_annealing(black_box_fn : (...), x_0, y_0, temperature_fn : (...), init_temperature : float, neighbor_fn : (...), probability_fn : (...) , iterations : int, opt_type : str) :
     if not(opt_type == 'MAX' or opt_type == 'MIN') :
@@ -21,5 +22,5 @@ def simulated_annealing(black_box_fn : (...), x_0, y_0, temperature_fn : (...), 
 def defaultTemperature(temperature) :
     return temperature * 0.1
 
-def defaultProbability(a : torch.Tensor, b : torch.Tensor,temperature : torch.Tensor, opt_type : str) :
-    return min(1,torch.exp(-(b - a if opt_type == 'MIN' else a - b) / temperature))
+def defaultProbability(a : float, b : float, temperature : float, opt_type : str) :
+    return min(1,exp(-(b - a if opt_type == 'MIN' else a - b) / temperature))

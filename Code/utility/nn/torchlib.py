@@ -2,6 +2,7 @@ import pandas
 from pandas import (DataFrame, read_csv)
 from pathlib import Path
 import torch
+from collections.abc import Sequence
 from torch import (Tensor, flatten)
 
 def save_HA(C : list[int], phi : list[str], save_path : Path) :
@@ -10,8 +11,8 @@ def save_HA(C : list[int], phi : list[str], save_path : Path) :
     columns_types = ['Int64','string']
     arch_dataframe = DataFrame(index = range(len(C)), columns = columns)
     arch_dataframe = arch_dataframe.astype(dict(zip(columns,columns_types)), copy = False)
-    arch_dataframe.iloc[range(len(C)),0] = C
-    arch_dataframe.iloc[range(len(phi)),1] = phi
+    arch_dataframe.iloc[list(range(len(C))),0] = C # type: ignore
+    arch_dataframe.iloc[list(range(len(phi))),1] = phi # type: ignore
     arch_dataframe.to_csv(save_path, index_label = 'Layer')
 
 def load_HA(load_path : Path) -> DataFrame :
@@ -43,7 +44,7 @@ def load_LVDB(load_path : Path, dtype = torch.double) :
         if n == 0 :
             vector_list += [ None ]
         else :
-            vector_list += [ torch.zeros(n, dtype = dtype) ]
+            vector_list += [ torch.zeros(n, dtype = dtype).detach() ]
             vector_list[-1][:] = vector_frame.loc[k, [f'{i}' for i in range(n)] ]
     return vector_list
     
@@ -67,7 +68,7 @@ def load_LMDB(load_path : Path, dtype = torch.double) :
         if n == 0 or m == 0 :
             matrix_list += [ None ]
         else :
-            matrix_list += [ torch.zeros(n, m, dtype = dtype) ]
+            matrix_list += [ torch.zeros(n, m, dtype = dtype).detach() ]
             matrix_list[-1][:] = matrix_dataframe.loc[k, [f'{i}' for i in range(n * m)] ]
     return matrix_list
 
@@ -93,37 +94,37 @@ def bin2weights_bias(var_frame : DataFrame, C : list[int], digits : list[Tensor]
                         w[k][i][j] += pow(2, l) * var_frame.at[f'b_{k}_{i}_{j}_{l}','Value']
     return tensor2weights_bias(w)
 
-def tensor2weights_bias(weights : list[Tensor | None]) :
+def tensor2weights_bias(weights : Sequence[Tensor | None]) :
     params = [[], []]
     for w in weights :
         if w is not None :
-            weights, bias= w.tensor_split([-1], dim = 0)
-            params[0] += [torch.t(weights)]; params[1] += [torch.t(bias)]
+            weight, bias = w.tensor_split([-1], dim = 0)
+            params[0] += [torch.t(weight).detach()]; params[1] += [torch.t(bias).detach()]
         else :
             params[0] += [None]; params[1] += [None]
     return tuple(params)
 
-def weights_bias2tensor(weights : list[Tensor], bias : list[Tensor]) :
+def weights_bias2tensor(weights : Sequence[Tensor], bias : Sequence[Tensor]) :
     weights_list = []
     for w,b in zip(weights,bias) :
         if w is not None and b is not None :
-            weights_list += [ torch.t(torch.cat((w,b.unsqueeze(1)),1)) ]
+            weights_list += [ torch.t(torch.cat((w,b.unsqueeze(1).detach()),1).detach()).detach() ]
         elif w is not None :
-            weights_list += [ torch.t(w) ]
+            weights_list += [ torch.t(w).detach() ]
         elif b is not None :
-            weights_list += [ torch.t(b) ]
+            weights_list += [ torch.t(b).detach() ]
         else :
             weights_list += [ None ]
     return weights_list
 
-def weights_precision(weights : list[Tensor], digits : list[Tensor] | int) :
+def weights_precision(weights : Sequence[Tensor], digits : Sequence[Tensor] | int) :
     precision = []
     if isinstance(digits,int) :
         for w in weights :
             _, e = w.frexp()
-            precision += [ e - torch.div(digits + 1, 2, rounding_mode = 'floor').int() ]
+            precision += [ e - torch.div(digits + 1, 2, rounding_mode = 'floor').detach().int() ]
     else :
         for w, d in zip(weights,digits) :
             _, e = w.frexp()
-            precision += [ e - torch.div(d + 1, 2, rounding_mode = 'floor').int() ]
+            precision += [ e - torch.div(d + 1, 2, rounding_mode = 'floor').detach().int() ]
     return precision

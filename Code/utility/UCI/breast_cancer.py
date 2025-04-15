@@ -9,7 +9,7 @@ argparser.add_argument('--load_path', '-lp')
 
 def get_dataframes(load_path : PurePath) :
     columns = Index(['Class', 'age', 'menopause', 'tumor-size', 'inv-nodes', 'node-caps', 'deg-malig', 'breast', 'breast-quad', 'irradiat'])
-    breast_cancer_frame = read_csv(load_path / 'breast-cancer.data', names = columns)
+    breast_cancer_frame = read_csv(load_path / 'breast-cancer.data', names = columns.to_list())
     indexes = breast_cancer_frame.index
 
     age_index = Index(['10-19', '20-29', '30-39', '40-49', '50-59', '60-69', '70-79', '80-89', '90-99'])

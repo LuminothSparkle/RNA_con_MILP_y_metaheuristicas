@@ -1,4 +1,5 @@
-loss : 0.05521088690606481
-best loss : 0.05521088690606481
-time : 1286420500 ns
-time : 0 m 1 s 286 ms 420 micros 500 ns
+time : 200 ns
+time : 0 m 9 s 463 ms 395 micros 200 ns
+best test loss : 0.09117234231706337
+best test loss : 0.08397524241903416
+best test loss : 0.09336713960565954
