@@ -1,5 +1,3 @@
-
-#include <gurobi_c++.h>
 #include <iostream>
 #include <format>
 #include <vector>
@@ -12,6 +10,12 @@
 #include <unordered_map>
 #include <optional>
 #include <utility>
+#include <ranges>
+#include <gurobi_c++.h>
+
+#include <functional>
+
+#include <variant>
 
 namespace fsys = std::filesystem;
 using std::fstream;
@@ -25,647 +29,614 @@ using std::pair;
 using std::getline;
 using std::stoi;
 using std::stod;
+using std::accumulate;
+using std::views;
+using std::ranges;
+using std::reference_wrapper;
+using std::istream;
+using std::ostream;
+using std::cin;
+using std::clog;
 using std::cout;
+using std::move;
+using std::make_tuple;
+
+using std::variant;
+using std::holds_alternative;
+
 
 template<typename T>
 using vec = std::vector<T>;
 template<typename T>
 using mat = vec<vec<T>>;
 template<typename T>
-using ten3 = vec<vec<vec<T>>>;
+using ten3 = vec<mat<T>>;
 template<typename T>
-using ten4 = vec<vec<vec<vec<T>>>>;
+using ten4 = vec<ten3<T>>;
 template<typename T>
-using ten5 = vec<vec<vec<vec<vec<T>>>>>;
+using ten5 = vec<ten4<T>>;
 
-auto layer_binary_variables(GRBModel& model, int L, const vec<int>& C, const ten3<int>& D, const optional<ten3<bool>>& mask = {}) {
-   ten4<GRBVar> b(L);
-   for(int k = 0; k < L; ++k) {
-      b[k] = ten3<GRBVar>(C[k] + 1);
-      for(int i = 0; i <= C[k]; ++i) {
-         b[k][i] = mat<GRBVar>(C[k + 1]);
-         for(int j = 0; j < C[k + 1]; ++j)
-            if(mask && (*mask)[k][i][j] || !mask) {
-               b[k][i][j] = vec<GRBVar>(D[k][i][j] + 1);
-               for(int l = 0; l <= D[k][i][j]; ++l)
-                  b[k][i][j][l] = model.addVar(0, 1, 0, GRB_BINARY, format("b_{}_{}_{}_{}",  k, i, j, l));
-            }
-      }
+GRBVar gen_abs_var(GRBModel& model, const GRBVar& x, const string& var_name, const string& constr_name) {
+   GRBVar var_abs = model.addVar(0, GRB_INFINITY, 0, GRB_CONTINUOUS, var_name);
+   model.addGenConstrAbs(var_abs, x, constr_name);
+   return var_abs;
+}
+
+template<typename T1, typename T2>
+GRBVar gen_diff_var(GRBModel& model, const T1& a, const T2& b, const string& var_name, const string& constr_name) {
+   GRBVar var_diff = model.addVar(-GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS, var_name);
+   model.addConstr(a - b, GRB_EQUAL, var_diff, constr_name);
+   return var_diff;
+}
+
+GRBVar gen_max_var(GRBModel& model, const vec<GRBVar>& X, const string& var_name, const string& constr_name, double min = 0) {
+   GRBVar var_max = model.addVar(min, GRB_INFINITY, 0, GRB_CONTINUOUS, var_name);
+   model.addGenConstrMax(var_max, X.data(), X.size(), min, constr_name);
+   return var_max;
+}
+
+GRBVar gen_min_var(GRBModel& model, const vec<GRBVar>& X, const string& var_name, const string& constr_name, double max = 0) {
+   GRBVar var_min = model.addVar(-GRB_INFINITY, max, 0, GRB_CONTINUOUS, var_name);
+   model.addGenConstrMin(var_min, X.data(), X.size(), max, constr_name);
+   return var_min;
+}
+
+template<typename T1, typename T2>
+GRBVar gen_abs_error_var(GRBModel& model, const T1& y, const T2& ty, const string& var_name,  const string& constr_name) {
+   GRBVar dy = gen_diff_var(model, y, ty, format("{}_diff",error_var_name), format("{}_diff",constr_name));
+   return gen_abs_var(model, dy, var_name, constr_name);
+}
+
+GRBVar gen_act_var(GRBModel& model, const GRBVar& x, const string& dropout_name, const optional<double>& dropout = {}) {
+   if( dropout.transform([](double dropout) { return dropout > uniform_real_distribution<double>(0,1)(); }).value_or(false) ) {
+      return model.addVar(0, 0, 0, GRB_CONTINUOUS, dropout_name);
    }
-   return b;
-}
-
-auto pounded_activation_variables(GRBModel& model, int T, int L, const vec<int>& C, const ten3<int>& D, const optional<ten3<bool>>& mask = {}) {
-   ten5<GRBVar> bw(T,ten4<GRBVar>(L));
-   for(int t = 0; t < T; ++t)
-      for(int k = 0; k < L; ++k) {
-         bw[t][k] = ten3<GRBVar>(C[k] + 1);
-         for(int i = 0; i <= C[k]; ++i) {
-            bw[t][k][i] = mat<GRBVar>(C[k + 1]);
-            for(int j = 0; j < C[k + 1]; ++j)
-               if(mask && (*mask)[k][i][j] || !mask) {
-                  bw[t][k][i][j] = vec<GRBVar>(D[k][i][j] + 1);
-                  for(int l = 0; l <= D[k][i][j]; ++l)
-                     bw[t][k][i][j][l] = model.addVar(-GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS, format("bw_{}_{}_{}_{}_{}", t, k, i, j, l));
-               }
-         }
-      }
-   return bw;
-}
-
-auto linear_activation_variables(GRBModel& model, int T, int L, const vec<int>& C) {
-   ten3<GRBVar> z(T,mat<GRBVar>(L));
-   for(int t = 0; t < T; ++t)
-      for(int k = 0; k < L; ++k) {
-         z[t][k] = vec<GRBVar>(C[k + 1]);
-         for(int j = 0; j < C[k + 1]; ++j)
-            z[t][k][j] = model.addVar(-GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS, format("z_{}_{}_{}", t, k, j));
-      }
-   return z;
-}
-
-auto total_error_variables(GRBModel& model, int T) {
-   vec<GRBVar> E(T); 
-   for(int t = 0; t < T; ++t)
-      E[t] = model.addVar(0, GRB_INFINITY, 0, GRB_CONTINUOUS, format("E_{}", t));
-   return E;
-}
-
-auto output_variables(GRBModel& model, int T, int L, const vec<int>& C) {
-   mat<GRBVar> y(T,vec<GRBVar>(C[L]));
-   for(int t = 0; t < T; ++t)
-      for(int j = 0; j < C[L]; ++j)
-         y[t][j] = model.addVar(-GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS, format("y_{}_{}", t, j));  
-   return y;
-}
-
-auto abs_error_variables(GRBModel& model, int T, int L, const vec<int>& C) {
-   mat<GRBVar> dy(T,vec<GRBVar>(C[L]));
-   for(int t = 0; t < T; ++t)
-      for(int j = 0; j < C[L]; ++j)
-         dy[t][j] = model.addVar(-GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS, format("dy_{}_{}", t, j));
-   return dy;
-}
-
-auto error_variables(GRBModel& model, int T, int L, const vec<int>& C) {
-   mat<GRBVar> e(T,vec<GRBVar>(C[L]));
-   for(int t = 0; t < T; ++t)
-      for(int j = 0; j < C[L]; ++j)
-         e[t][j] = model.addVar(0, GRB_INFINITY, 0, GRB_CONTINUOUS, format("e_{}_{}", t, j));
-   return e;
-}
-
-auto input_variables(GRBModel& model, int T, const vec<int>& C, const mat<double>& px) {
-   mat<GRBVar> x(T,vec<GRBVar>(C[0]));
-   for(int t = 0; t < T; ++t)
-      for(int i = 0; i < C[0]; ++i)
-         x[t][i] = model.addVar(px[t][i], px[t][i], 0, GRB_CONTINUOUS, format("x_{}_{}", t, i));
    return x;
 }
 
-auto activation_variables(GRBModel& model, int T, int L, const vec<int>& C) {
-   ten3<GRBVar> a(T,mat<GRBVar>(L + 1));
-   for(int t = 0; t < T; ++t)
-      for(int k = 0; k <= L; ++k) {
-         a[t][k] = vec<GRBVar>(C[k] + 1);
-         for(int i = 0; i <= C[k]; ++i)
-            a[t][k][i] = model.addVar(-GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS, format("a_{}_{}_{}", t, k, i));
-      }
+GRBVar gen_bin_w_var(GRBModel& model, const GRBVar& b, const GRBVar& a, const string& var_name, const string& constr_name, double coef, bool mask) {
+   if (!mask) {
+      return model.addVar(0, 0, 0, GRB_CONTINUOUS, format("{}_masked",var_name));
+   }
+   GRBVar bw = model.addVar(-GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS, var_name);
+   model.addGenConstrIndicator(b, 1, coef * a - bw, GRB_EQUAL, 0, format("{}_on",constr_name));
+   model.addGenConstrIndicator(b, 0, bw, GRB_EQUAL, 0, format("{}_off",constr_name));
+   return bw;
+}
+
+GRBVar gen_bin_var(GRBModel& model, const string& bin_var_name, bool mask = true) {
+   if (!mask) {
+      return model.addVar(0, 0, 0, GRB_BINARY, bin_var_name);
+   }
+   return model.addVar(0, 1, 0, GRB_BINARY, bin_var_name);
+}
+
+GRBVar gen_hardtanh_var(GRBModel& model, const GRBVar& z, const string& var_name, const string& constr_name, const pair<double,double>& limits = {-1,1}) {
+   GRBVar ht_min = model.addVar(-GRB_INFINITY, limits.first, 0, GRB_CONTINUOUS, format("{}_min", var_name));
+   GRBVar ht = model.addVar(limits.first, limits.second, 0, GRB_CONTINUOUS, var_name);
+   model.addGenConstrMin(ht_min, &z, 1, limits.first, format("{}_min", constr_name));
+   model.addGenConstrMax(ht, &ht_min, 1, limits.second, constr_name);
+   return ht;
+}
+
+GRBVar gen_hardsigmoid_var(GRBModel& model, const GRBVar& z, const string& var_name, const string& constr_name) {
+   GRBVar hs_z = model.addVar(-GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS, format("{}_z", var_name));
+   GRBVar hs_max = model.addVar(-GRB_INFINITY, 1, 0, GRB_CONTINUOUS, format("{}_max", var_name));
+   GRBVar hs = model.addVar(0, 1, 0, GRB_CONTINUOUS, var_name);
+   model.addConstr(z / 6 + 0.5, GRB_EQUAL, hs, format("{}_hsin", constr_name));
+   model.addGenConstrMin(hs_max, &hs_z, 1, 1, format("{}_min", constr_name));
+   model.addGenConstrMax(hs, &hs_max, 1, 0, hs_constr_name);
+   return hs;
+}
+
+GRBVar gen_ReLU6_var(GRBModel& model, const GRBVar& z, const string& var_name, const string& constr_name) {
+   GRBVar relu6_max = model.addVar(0, GRB_INFINITY, 0, GRB_CONTINUOUS, format("{}_max", var_name));
+   GRBVar relu6 = model.addVar(0, 6, 0, GRB_CONTINUOUS, var_name);
+   model.addGenConstrMax(relu6_max, &z, 1, 0, format("{}_max", constr_name));
+   model.addGenConstrMin(relu6, &relu6_max, 1, 6, constr_name);
+   return relu6;
+}
+
+GRBVar gen_ReLU_var(GRBModel& model, const GRBVar& z, const string& var_name, const string& constr_name) {
+   GRBVar relu = model.addVar(0, GRB_INFINITY, 0, GRB_CONTINUOUS, var_name);
+   model.addGenConstrMax(relu, &z, 1, 0, constr_name);
+   return relu;
+}
+
+GRBVar gen_LeakyReLU_var(GRBModel& model, const GRBVar& z, const string& lrelu_var_name, const string& lrelu_constr_name, double neg_coef = 0.25) {
+   GRBVar lrelu_max = model.addVar(-GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS, format("{}_max", lrelu_var_name));
+   GRBVar lrelu_min = model.addVar(-GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS, format("{}_min", lrelu_var_name));
+   GRBVar lrelu = model.addVar(-GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS, lrelu_var_name);
+   model.addGenConstrMax(lrelu_max, &z, 1, 0, format("{}_max", lrelu_constr_name));
+   model.addGenConstrMin(lrelu_min, &z, 1, 0, format("{}_min", lrelu_constr_name));
+   model.addConstr(lrelu == lrelu_max + neg_coef * lrelu_min, lrelu_constr_name);
+   return lrelu;
+}
+
+GRBVar gen_act_w_var(GRBModel& model, const vec<GRBVar>& bw, const string& act_w_var_name, const string& act_w_constr_name) {
+   GRBVar aw = model.addVar(-GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS, act_w_var_name);
+   model.addConstr(accumulate(bw.begin(), bw.end() - 1, GRBLinExpr(-bw.front())), GRB_EQUAL, aw, act_w_constr_name);
+   return aw;
+}
+
+vec<GRBVar> gen_input_vars(GRBModel& model, const string& var_preffix, const vec<double> fx, const optional<double>& dropout = {}) {
+   vec<GRBVar> a;
+   for(const auto& [i,fx] : views::enumerate(fx)) {
+      GRBVar x = model.addVar(fx, fx, 0, GRB_CONTINUOUS, format("{}_{}",var_preffix,i));
+      a.emplace_back(gen_act_var(model, x, format("drop{}_{}",var_preffix,i), dropout));
+   }
    return a;
 }
 
-auto bias_variables(GRBModel& model, int L, const optional<vec<double>>& used_bias) {
-   vec<GRBVar> bias(L);
-   if (used_bias)
-      for(int k = 0; k < L; ++k)
-         bias[k] = model.addVar((*used_bias)[k], (*used_bias)[k], 0, GRB_CONTINUOUS, format("bias_{}", k));
-   else
-      for(int k = 0; k < L; ++k)
-         bias[k] = model.addVar(1, 1, 0, GRB_CONTINUOUS, format("bias_{}", k));
-   return bias;
-}
-
-auto auxiliary_variables(GRBModel& model, int T, int L, const vec<int>& C) {
-   ten4<GRBVar> aux(T,ten3<GRBVar>(L));
-   for(int t = 0; t < T; ++t)
-      for(int k = 0; k < L; ++k) {
-         aux[t][k] = mat<GRBVar>(C[k + 1]);
-         for(int j = 0; j < C[k + 1]; ++j) {
-            aux[t][k][j] = vec<GRBVar>(2);
-            aux[t][k][j][0] = model.addVar(-GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS, format("aux_{}_{}_{}_A", t, k, j));
-            aux[t][k][j][1] = model.addVar(-GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS, format("aux_{}_{}_{}_B", t, k, j));
-         }
-      }
-   return aux;
-}
-
-void absolute_error_constraints(GRBModel& model, const mat<GRBVar>& e, const mat<GRBVar>& y, const mat<GRBVar>& dy, int T, int L, const vec<int>& C, const mat<double>& ty) {
-   for(int t = 0; t < T; ++t)
-      for(int j = 0; j < C[L]; ++j) {
-         model.addConstr(y[t][j] - dy[t][j], GRB_EQUAL, ty[t][j], format("Diff_Pred_N{}_C{}", j, t));
-         model.addGenConstrAbs(e[t][j], dy[t][j], format("Abs_e_N{}_C{}", j, t));
-      }
-}
-
-void sum_error_constraints(GRBModel& model, const GRBVar& J, const vec<GRBVar>& E, const mat<GRBVar>& e, int T, int L, const vec<int>& C) {
-   GRBLinExpr case_sum_error_expr;
-   for(int t = 0; t < T; ++t) {
-      GRBLinExpr sum_error_expr;
-      for(int j = 0; j < C[L]; ++j)
-         sum_error_expr += e[t][j];
-      model.addConstr(sum_error_expr, GRB_EQUAL, E[t], format("Abs_E_C{}", t));
-      case_sum_error_expr += E[t];
+vec<GRBVar> gen_layer_vars(GRBModel& model, const vec<GRBVar>& act, const ten3<GRBVar>& b, const GRBVar& bias, const string& var_suffix, const string& constr_suffix, 
+                             int in_C, int out_C, const mat<int>& precis, const mat<bool>& mask, const optional<double>& dropout) {
+   vec<GRBVar> a;
+   for(const auto& [i, act] : views::enumerate(act)) {
+      a.emplace_back(gen_act_var(model, act, format("dropz{}_{}",var_suffix,i), dropout));
    }
-   model.addConstr(case_sum_error_expr, GRB_EQUAL, J, format("Abs_T_E"));
-}
-
-void max_error_objective(GRBModel& model, const GRBVar& J, const vec<GRBVar>& E, const mat<GRBVar>& e, int T, int L, const vec<int>& C) {
-   GRBLinExpr case_sum_error_expr;
-   for(int t = 0; t < T; ++t) {
-      model.addGenConstrMax(E[t], e[t].data(), e[t].size(), 0, format("Max_Abs_E_C{}", t));
-      case_sum_error_expr += E[t];
-   }
-   model.addConstr(case_sum_error_expr, GRB_EQUAL, J,format("Max_Abs_T_E"));
-}
-
-void max_total_error_objective(GRBModel& model, const GRBVar& J, const vec<GRBVar>& E, const mat<GRBVar>& e, int T, int L, const vec<int>& C) {
-   for(int t = 0; t < T; ++t)
-      model.addGenConstrMax(E[t], e[t].data(), e[t].size(), 0, format("Max_Abs_E_C{}", t));
-   model.addGenConstrMax(J, E.data(), E.size(), 0, format("Max_T_Abs_E"));
-}
-
-void output_layer_constraints(GRBModel& model, const ten3<GRBVar>& a, const mat<GRBVar>& y, int T, int L, const vec<int>& C) {
-   for(int t = 0; t < T; ++t)
-      for(int j = 0; j < C[L]; ++j)
-         model.addConstr(y[t][j], GRB_EQUAL, a[t][L][j], format("Output_N{}_C{}", j, t));
-}
-
-void hardtanh_constraints(GRBModel& model, const ten3<GRBVar>& z, const ten4<GRBVar>& aux, const ten3<GRBVar>& a, int T, int k, const vec<int>& C, const pair<double,double>& limits = {-1,1}) {
-   for(int t = 0; t < T; ++t)
-      for(int j = 0; j < C[k + 1]; ++j) {
-         model.addGenConstrMin(aux[t][k][j][0], &z[t][k][j], 1, limits.first, format("L{}_N{}_Hardtanh_A_C{}", k, j, t));
-         model.addGenConstrMax(a[t][k + 1][j], &aux[t][k][j][0], 1, limits.second, format("L{}_N{}_Hardtanh_B_C{}", k, j, t));
-      }
-}
-
-void hardsigmoid_constraints(GRBModel& model, const ten3<GRBVar>& z, const ten4<GRBVar>& aux, const ten3<GRBVar>& a, int T, int k, const vec<int>& C) {
-   for(int t = 0; t < T; ++t)
-      for(int j = 0; j < C[k + 1]; ++j) {
-         model.addConstr(z[t][k][j] / 6 + 0.5, GRB_EQUAL, aux[t][k][j][0], format("L{}_N{}_Hardsigmoid_A_C{}", k, j, t));
-         model.addGenConstrMin(aux[t][k][j][1],&aux[t][k][j][0],1,1, format("L{}_N{}_Hardsigmoid_B_C{}", k, j, t));
-         model.addGenConstrMax(a[t][k + 1][j],&aux[t][k][j][1],1,0, format("L{}_N{}_Hardsigmoid_C_C{}", k, j, t));
-      }
-}
-
-void ReLU6_constraints(GRBModel& model, const ten3<GRBVar>& z, const ten4<GRBVar>& aux, const ten3<GRBVar>& a, int T, int k, const vec<int>& C) {
-   for(int t = 0; t < T; ++t)
-      for(int j = 0; j < C[k + 1]; ++j) {
-         model.addGenConstrMax(aux[t][k][j][0],&z[t][k][j],1,0, format("L{}_N{}_RELU6_A_C{}", k, j, t));
-         model.addGenConstrMin(a[t][k + 1][j],&aux[t][k][j][0],1,6, format("L{}_N{}_RELU6_B_C{}", k, j, t));
-      }
-}
-
-void ReLU_constraints(GRBModel& model, const ten3<GRBVar>& z, const ten4<GRBVar>& aux, const ten3<GRBVar>& a, int T, int k, const vec<int>& C) {
-   for(int t = 0; t < T; ++t)
-      for(int j = 0; j < C[k + 1]; ++j)
-         model.addGenConstrMax(a[t][k + 1][j],&z[t][k][j],1,0, format("L{}_N{}_ReLU_C{}", k + 1, j, t));
-}
-
-void direct_pass_constraints(GRBModel& model, const ten3<GRBVar>& z, const ten4<GRBVar>& aux, const ten3<GRBVar>& a, int T, int k, const vec<int>& C) {
-   for(int t = 0; t < T; ++t)
-      for(int j = 0; j < C[k + 1]; ++j)
-         model.addConstr(a[t][k + 1][j], GRB_EQUAL, z[t][k][j], format("L{}_N{}_ReLU_C{}", k + 1, j, t));
-}
-
-void LeakyReLU_constraints(GRBModel& model, const ten3<GRBVar>& z, const ten4<GRBVar>& aux, const ten3<GRBVar>& a, int T, int k, const vec<int>& C, double neg_coef = 0.25) {
-   for(int t = 0; t < T; ++t)
-      for(int j = 0; j < C[k + 1]; ++j) {
-         model.addGenConstrMax(aux[t][k][j][0],&z[t][k][j],1,0, format("L{}_N{}_LeakyReLU_A_C{}", k, j, t));
-         model.addGenConstrMin(aux[t][k][j][1],&z[t][k][j],1,0, format("L{}_N{}_LeakyReLU_B_C{}", k, j, t));
-         model.addConstr(a[t][k + 1][j] == aux[t][k][j][0] + neg_coef * aux[t][k][j][1], format("L{}_N{}_LeakyReLU_C_C{}", k, j, t));
-      }
-}
-
-void PReLU_constraints(GRBModel& model, const ten3<GRBVar>& z, const ten4<GRBVar>& aux, const ten3<GRBVar>& a, int T, int k, const vec<int>& C, const optional<vec<double>>& neg_coef = {}) {
-   for(int t = 0; t < T; ++t)
-      for(int j = 0; j < C[k + 1]; ++j) {
-         model.addGenConstrMax(aux[t][k][j][0],&z[t][k][j],1,0, format("L{}_N{}_PReLU_A_C{}", k, j, t));
-         model.addGenConstrMin(aux[t][k][j][1],&z[t][k][j],1,0, format("L{}_N{}_PReLU_B_C{}", k, j, t));
-         if(neg_coef && (*neg_coef).size() > 0)
-            model.addConstr(a[t][k + 1][j] == aux[t][k][j][0] + (*neg_coef)[j] * aux[t][k][j][1], format("L{}_N{}_PReLU_C_C{}", k, j, t));
-         else
-            model.addConstr(a[t][k + 1][j] == aux[t][k][j][0] + 0.25 * aux[t][k][j][1], format("L{}_N{}_PReLU_C_C{}", k, j, t));
-      }
-}
-
-void bias_constraints(GRBModel& model, const vec<GRBVar>& layer_bias, const ten3<GRBVar>& a, int T, int L, const vec<int>& C) {
-   for(int t = 0; t < T; ++t)
-      for(int k = 0; k < L; ++k)
-         model.addConstr(layer_bias[k], GRB_EQUAL, a[t][k][C[k]], format("L{}_bias_C{}",k,t));
-}
-
-void binary_constraints(GRBModel& model, const ten4<GRBVar>& b, const ten5<GRBVar>& bw, const ten3<GRBVar>& a, const ten3<GRBVar>& z, int T, int L, const vec<int>& C, const ten3<int>& D, const optional<ten3<int>>& precis = {}, const optional<ten3<bool>>& mask = {}) {
-   for(int t = 0; t < T; ++t)
-      for(int k = 0; k < L; ++k)
-         for(int i = 0; i <= C[k]; ++i)
-            for(int j = 0; j < C[k + 1]; ++j)
-               if(mask && (*mask)[k][i][j] || !mask)
-                  for(int l = 0; l <= D[k][i][j]; ++l) {
-                     if(precis)
-                        model.addGenConstrIndicator(b[k][i][j][l], 1, exp2(l - (*precis)[k][i][j]) * a[t][k][i] - bw[t][k][i][j][l], GRB_EQUAL, 0, format("L{}_W{},{}_D{}_Descomp_A_C{}",k,i,j,l,t));
-                     else
-                        model.addGenConstrIndicator(b[k][i][j][l], 1, exp2(l) * a[t][k][i] - bw[t][k][i][j][l], GRB_EQUAL, 0, format("L{}_W{},{}_D{}_Descomp_A_C{}",k,i,j,l,t));
-                     model.addGenConstrIndicator(b[k][i][j][l], 0, bw[t][k][i][j][l], GRB_EQUAL, 0, format("L{}_W{},{}_D{}_Descomp_B_C{}",k,i,j,l,t));
-                  }
-   for(int t = 0; t < T; ++t)
-      for(int k = 0; k < L; ++k)
-         for(int j = 0; j < C[k + 1]; ++j) {
-            GRBLinExpr neuron_linear_expr;
-            for(int i = 0; i <= C[k]; ++i)
-               if(mask && (*mask)[k][i][j] || !mask) {
-                  for(int l = 0; l < D[k][i][j]; ++l) {
-                     neuron_linear_expr += bw[t][k][i][j][l];
-                  }
-                  neuron_linear_expr -= bw[t][k][i][j][D[k][i][j]];
-               }
-            model.addConstr(neuron_linear_expr, GRB_EQUAL, z[t][k][j], format("Lin_Output_L{}_N{}_C{}",k,j,t));
+   a.emplace_back(bias);
+   mat<GRBVar> aw( out_C, vec<GRBVar>(in_C + 1) );
+   for(const auto& [i,b,a,precis,mask] : views::zip(views::iota(0),b,a,precis,mask)) {
+      for(const auto& [j,b,precis,mask] : views::zip(views::iota(0),b,precis,mask)) {
+         vec<GRBVar> bw;
+         for(const auto& [l,b] : views::enumerate(b)) {
+            bw.emplace_back(gen_bin_w_var(model, b, a, format("bw{}_{}_{}_{}",var_suffix,i,j,l), format("bw{}_w{},{}_D{}",constr_suffix,i,j,l), exp2(l - precis), mask));
          }
+         aw[j][i] = gen_act_w_var(model, bw, format("aw{}_{}_{}",var_suffix,i,j), format("aw{}_w{},{}",constr_suffix,i,j));
+      }
+   }
+   vec<GRBVar> z;
+   for(const auto& [j,aw] : views::enumerate(aw)) {
+      z.emplace_back(gen_sum_var(model, aw, format("z{}_{}",var_suffix,j), format("z{}_N{}",constr_suffix,j)));
+   }
+   return z;
 }
 
-void input_layer_constraints(GRBModel& model, const ten3<GRBVar>& a, const mat<GRBVar>& x, int T, const vec<int>& C) {
-   for(int t = 0; t < T; ++t)
-      for(int i = 0; i < C[0]; ++i)
-         model.addConstr(a[t][0][i], GRB_EQUAL, x[t][i], format("Input_N{}_C{}", t, i));
+GRBVar gen_w_var(GRBModel& model, const vec<GRBVar>& b, const string& var_name, const string& constr_name, int precis = 4) {
+   GRBVar w(model.addVar(-GRB_INFINITY, GRB_INFINITY, 0, var_name));
+   GRBLinExpr expr(-exp2(b.size() - 1 - precis) * b.front());
+   for(const auto& [l,b] : views::enumerate(views::take(b,b.size() - 1))) {
+      expr += exp2(l - precis) * b;
+   }
+   model.addConstr(expr, GRB_EQUAL, w, constr_name);
+   return w;
 }
 
-enum Obj_Func {
-   SUM,
-   MAX_e,
-   MAX_E
-};
+GRBVar gen_l1w_var(GRBModel& model, const mat<GRBVar> w, const string& var_name, const string& constr_name) {
+   GRBVar l1w(model.addVar(-GRB_INFINITY, GRB_INFINITY, 0, var_name));
+   GRBLinExpr expr;
+   for(double w_i_size = w.size(); const auto& [i, w] : views::enumerate(w)) {
+      for(double w_j_size = w.size(); const auto& [j, w] : views::enumerate(w)) {
+         expr += gen_abs_var(model, w, format("{}_{}_{}",var_name,i,j), format("{}_w{},{}",constr_name,i,j)) / (w_i_size * w_j_size);
+      }
+   }
+   model.addConstr(expr, GRB_EQUAL, l1w, constr_name);
+   return l1w;
+}
 
-GRBModel get_model(const GRBEnv& environment, int T, int L, const vec<int>& C, const vec<string>& AF, const ten3<int>& D, const mat<double>& tx, const mat<double>& ty, Obj_Func optim_opt = Obj_Func::SUM, const optional<ten3<bool>>& mask = {}, const optional<ten3<int>>& precis = {}, const optional<vec<double>>& bias_w = {}, const optional<vec<double>>& LeakyReLU_coef = {}, const optional<mat<double>>& PReLU_coef = {}, const optional<vec<pair<double,double>>>& hardtanh_limits = {}) {
+GRBVar gen_l1a_var(GRBModel& model, const vec<GRBVar>& a, const string& var_name, const strin& constr_name) {
+   GRBVar l1a(model.addVar(-GRB_INFINITY, GRB_INFINITY, 0, var_name));
+   for(double a_size = a.size(); const auto& [j,a] : views::enumerate(a)) {
+      expr += gen_abs_var(model, a, format("{}_{}",var_name,j), format("{}_N{}",constr_name,j)) / a_size;
+   }
+   model.addConstr(expr, GRB_EQUAL, l1a, constr_name);
+   return l1a;
+}
+
+GRBVar gen_class_error_var(GRBModel& model, const vec<GRBVar>& y, const string& var_name, const string& constr_name, const vec<double>& ty, double zero_tolerance = 0.0001) {
+   GRBVar EC = model.addVar(-GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS, var_name);
+   auto c_order = views::zip(ty,y,iota(0));
+   ranges::sort(c_order, [](const auto& tuple_a, const auto& tuple_b) { return get<double>(tuple_a) < get<double>(tuple_b); });
+   const auto& pred = [zero_tolerance](const auto& tuple) {
+      const auto& [ty,y,j] = tuple; return ty <= zero_tolerance;
+   };
+   for(const auto& [y,ty,j] : views::take_while(c_order, pred)) {
+      expr += y;
+   }
+   const auto& non_zero = views::drop_while(c_order, pred);
+   for(const auto& [slide,tuple] : enumerate(non_zero)) {
+      const auto& [first,tc_a,j_a] = tuple;
+      for(const auto&[second,tc_b,j_b] : views::drop(non_zero, slide + 1)) {
+         GRBVar constrvio = model.addVar(-GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS, format("{}_{}_{}_constrvio", var_name, j_a, j_b));
+         model.addConstr(y_a - y_b + constrvio, GRB_EQUAL, log(tc_a / tc_b), format("{}_Rel{},{}", constr_name, j_a, j_b));
+         expr += gen_abs_var(model, constrvio, format("{}_{}_{}_abs",var_name, j_a, j_b), format("{}_Err{},{}", constr_name, j_a, j_b));
+      }
+   }
+   model.addConstr(expr, GRB_EQUAL, EC, constr_name);
+   return EC;
+}
+
+GRBVar gen_regression_error_var(GRBModel& model, const vec<GRBVar>& y, const string& var_name, const strin& constr_name, const vec<double>& ty) {
+   GRBVar ER = model.addVar(0, GRB_INFINITY, 0, GRB_CONTINUOUS, var_name);
+   GRBLinExpr expr;
+   for(const auto& [i,y,ty] : zip(views::iota(0), y, ty)) {
+      expr += gen_abs_error_var(model, y, ty, format("{}_{}",var_name,i), format("{}_N{}",constr_name,i));
+   }
+   model.addConstr(expr, GRB_EQUAL, ER, constr_name);
+   return ER;
+}
+
+vec<GRBVar> gen_activation_vars(GRBModel& model, const string& type,, const vec<GRBVar>& z, const string& var_suffix, const string constr_suffix 
+                                const vec<double>& LeakyReLU_coef, const pair<double,double>& hardtanh_limits) {
+   auto activation_function = [](int j, const GRBVar& z) { return z; };
+   if(type == "ReLU") {
+      activation_function = [&model,t,k](int j, const GRBVar& z) {
+         return gen_ReLU_var(model,z,format("relu{}_{}",var_suffix,j),format("relu{}_N{}",constr_suffix,j));
+      };
+   }
+   else if(type == "ReLU6") {
+      activation_function = [&model,t,k](int j, const GRBVar& z) {
+         return gen_ReLU6_var(model,z,format("relu6{}_{}",var_suffix,j),format("relu6{}_N{}",constr_suffix,j));
+      };
+   }
+   else if(type == "PReLU" || type == "LeakyReLU") {
+      activation_function = [&model,&leakyReLU_coef,t,k](int j, const GRBVar& z) {
+         return gen_LeakyReLU_var(model,z,format("Lrelu{}_{}",var_suffix,j),format("Lrelu{}_N{}",constr_suffix,j),leakyReLU_coef[j]);
+      };
+   }
+   else if(type  == "Hardtanh") {
+      activation_function = [&model,&hardtanh_limits,t,k](int j, const GRBVar& z) {
+         return gen_hardtanh_var(model,z,format("ht{}_{}",var_suffix,j),format("ht{}_N{}",constr_suffix,j),hardtanh_limits);
+      };
+   }
+   else if(type == "Hardsigmoid") {
+      activation_function = [&model,t,k](int j, const GRBVar& z) {
+         return gen_hardsigmoid_var(model,z[j],format("hs{}_{}",var_suffix,j),format("hs{}_N{}",constr_suffix,j));
+      };
+   }
+   vec<GRBVar> a;
+   for(const auto& [j,z] : views::enumerate(z)) {
+      a.emplace_back(activation_function(j,z));
+   }
+   return a;
+}
+
+GRBModel get_model(const GRBEnv& environment, int T, int L, const vec<int>& C, const mat<double>& fx, const vec<optional<string>>& AF, 
+                   const mat<double>& reg_ty,const mat<double>& class_ty, const ten3<bool>& mask, const ten3<int>& precis,
+                   const ten3<int>& D, const vec<double>& bias_w, const mat<double>& leakyReLU_coef, const vec<optional<pair<double,double>>>& hardtanh_limits,
+                   const vec<optional<double>>& dropout, const optional<reference_wrapper<vec<optional<double>>>>& l1a_norm = {},
+                   const optional<reference_wrapper<vec<optional<double>>>>& l1w_norm = {}, double zero_tolerance = 0.0001) {
    GRBModel model(environment);
-   GRBVar J = model.addVar(0, GRB_INFINITY, 0, GRB_CONTINUOUS, format("J"));
-   auto E = total_error_variables(model,T);
-   auto e = error_variables(model,T,L,C);
-   auto dy = abs_error_variables(model,T,L,C);
-   auto y = output_variables(model,T,L,C);
-   auto aux = auxiliary_variables(model,T,L,C);
-   auto z = linear_activation_variables(model,T,L,C);
-   auto bw = pounded_activation_variables(model,T,L,C,D,mask);
-   auto b = layer_binary_variables(model,L,C,D,mask);
-   auto bias = bias_variables(model,L,bias_w);
-   auto a = activation_variables(model,T,L,C);
-   auto x = input_variables(model,T,C,tx);
-   
-   model.setObjective(GRBLinExpr(J), GRB_MINIMIZE);
-   switch(optim_opt) {
-      case Obj_Func::MAX_E :
-         max_total_error_objective(model,J,E,e,T,L,C);
-         break;
-      case Obj_Func::MAX_e :
-         max_error_objective(model,J,E,e,T,L,C);
-         break;
-      case Obj_Func::SUM :
-         sum_error_constraints(model,J,E,e,T,L,C);
+   ten4<GRBVar> b(L);
+   vec<GRBVar> bias(L);
+   GRBLinExpr L1_expr;
+   for(int k = 0; k < L; ++k) {
+      b[k] = ten3<GRBVar>(C[k] + 1,mat<GRBVar>(C[k + 1]));
+      mat<GRBVar> w(C[k] + 1,vec<GRBVar>(C[k + 1]));
+      for(int i = 0; i <= C[k]; ++i) {
+         for(int j = 0; j < C[k + 1]; ++j) {
+            b[k][i][j] = vec<GRBVar>(D[k][i][j] + 1);
+            for(int l = 0; l <= D[k][i][j]; ++l) {
+               b[k][i][j][l] = gen_bin_var(model, format("b_{}_{}_{}_{}",k,i,j,l), mask[k][i][j]);
+            }
+            w[i][j] = gen_w_var(model, b[k][i][j], format("b_{}_{}_{}_{}",k,i,j,l), format("b_{}_{}_{}_{}",k,i,j,l), precis[k][i][j]);
+         }
+      }
+      if(l1w_norm) {
+         L1_expr += *l1w_norm * gen_l1w_var(model, w, format("l1w_{}",k), format("l1w_L{}",k));
+      }
+      bias[k] = model.addVar(bias_w[k], bias_w[k], 0, GRB_CONTINUOUS, format("bias_{}",k));
    }
-   absolute_error_constraints(model,e,y,dy,T,L,C,ty);
-   output_layer_constraints(model,a,y,T,L,C);
-   for(int k = 0; k < L; ++k)
-      if(AF[k] == "ReLU")
-         ReLU_constraints(model,z,aux,a,T,k,C);
-      else if(AF[k] == "ReLU6")
-         ReLU6_constraints(model,z,aux,a,T,k,C);
-      else if(AF[k] == "PReLU")
-         if(PReLU_coef && (*PReLU_coef).size() > k  && (*PReLU_coef)[k].size() > 0)
-            PReLU_constraints(model,z,aux,a,T,k,C,(*PReLU_coef)[k]);
-         else
-            PReLU_constraints(model,z,aux,a,T,k,C);
-      else if(AF[k] == "LeakyReLU")
-         if(LeakyReLU_coef && (*LeakyReLU_coef).size() > k)
-            LeakyReLU_constraints(model,z,aux,a,T,k,C,(*LeakyReLU_coef)[k]);
-         else
-            LeakyReLU_constraints(model,z,aux,a,T,k,C);
-      else if(AF[k]  == "Hardtanh")
-         if(hardtanh_limits && (*hardtanh_limits).size() > k)
-            hardtanh_constraints(model,z,aux,a,T,k,C,(*hardtanh_limits)[k]);
-         else
-            hardtanh_constraints(model,z,aux,a,T,k,C);
-      else if(AF[k] == "Hardsigmoid")
-         hardsigmoid_constraints(model,z,aux,a,T,k,C);
-      else
-         direct_pass_constraints(model,z,aux,a,T,k,C);
-   bias_constraints(model,bias,a,T,L,C);
-   binary_constraints(model,b,bw,a,z,T,L,C,D,precis);
-   input_layer_constraints(model,a,x,T,C);
+   GRBLinExpr EC_expr, ER_expr;
+   for(const auto& [t,fx,tc_y,treg_y] : views::zip(views::iota(0),fx,tc_y,treg_y)) {
+      vec<GRBVar> a = gen_input_vars(model, format("x_{}",t), fx, dropout.back());
+      for(const auto& [k,b,AF,D,precis,bias,dropout,leakyReLU_coef,hardtanh_limits] : views::zip(views::iota(0),b,AF,D,precis,bias,views::drop(dropout,1),leakyReLU_coef,hardtanh_limits)) {
+         const auto& z = gen_layer_vars(model, C[k], C[k + 1], a, b, bias, format("_{}_{}",t,k), format("_L{}_C{}",k,t), precis, mask, dropout);
+         a = gen_activation_vars(model, AF.value_or(""), z, format("_{}_{}",t,k), format("_L{}_C{}",k,t), leakyReLU_coef, hardtanh_limits.value_or({-1,1}));
+         if(l1a_norm && l1a_norm->get()[k]) {
+            L1_expr += *l1a_norm->get()[k] * gen_l1a_var(model, a, format("l1a_{}_{}",t,k), format("l1a_L{}_C{}",k,t));
+         }
+      }
+      const auto& ry_view = views::take(a, treg_y.size());
+      const auto& cy_view = views::drop(a, treg_y.size());
+      EC_expr += gen_class_error_var(model, vec<GRBVar>( ry_view.begin(), ry_view.end() ), format("EC_{}",t), format("ClassE_{}",t), treg_y, zero_tolerance);
+      ER_expr += gen_regression_error_var(model, vec<GRBVar>( cy_view.begin(), cy_view.end() ), format("ER_{}",t), format("RegE_{}",t), tc_y);
+   }
+   model.setObjective(EC_expr + ER_expr + L1_expr, GRB_MINIMIZE);
    return model;
 }
 
 template<typename T>
-auto read_matrix(const path& matrix_path) {
-   fstream matrix_stream(matrix_path);
+istream& operator>>(istream& stream, optional<T>& opt) {
+   T value; stream >> value; opt = value;
+}
+
+template<typename T1, typename T2>
+istream& operator>>(istream& stream, pair<T1,T2>& pair) {
+   stream >> pair.first >> pair.second;
+}
+
+template<typename T>
+auto read_matrix_from_csv(istream&& input, bool ignore_header = false, bool ignore_index = false) {
    string line, word;
-   mat<T> matrix;
-   getline(matrix_stream, line);
-   while(getline(matrix_stream, line)) {
-      replace(line.begin(),line.end(),',',' ');
-      stringstream line_stream(line);
-      vec<T> row;
-      line_stream >> word;
-      T value;
-      while(line_stream  >> std::noboolalpha >> value)
-         row.push_back(value);
-      matrix.push_back(row);
+   stringstream line_stream, word_stream;
+   if(ignore_header) {
+      getline(input, line);
+   }
+   mat<optional<T>> matrix;
+   while(getline(input, line)) {
+      line_stream.str(move(line));
+      vec<T> vector;
+      if(ignore_index) {
+         getline(line_stream, word, ',');
+      }
+      while(getline(line_stream, word, ',')) {
+         word_stream.str(move(word));
+         T value;
+         word_stream >> value;
+         vector.emplace_back(move(value));
+      }
+      matrix.emplace_back(move(vector));
    }
    return matrix;
 }
 
-pair<vec<int>,vec<string>> read_arch(const path& arch_path) {
-   fstream arch_stream(arch_path);
+template<typename T>
+auto read_list_from_csv(istream&& input, bool ignore_index = false) {
    string line, word;
+   stringstream line_stream, word_stream;
+   getline(input, line);
+   line_stream.str(move(line));
+   if(ignore_index) {
+      getline(line_stream, word);
+   }
+   int max_dim = 0;
+   while(getline(line_stream, word) && word.startswith('d_')) {
+      ++max_dim;
+   }
+   vec<vec<int>> dim_list;
+   vec<vec<T>> data_list;
+   while(getline(input, line)) {
+      line_stream.str(move(line));
+      if(ignore_index) {
+         getline(line_stream, word, ',');
+      }
+      vec<int> dim(max_dim);
+      for(auto& d : dim) {
+         getline(line_stream, word, ',');
+         word_stream.str(move(word));
+         word_stream >> d;
+      }
+      vec<T> data;
+      while(getline(line_stream, word, ',') && word != "") {
+         word_stream.str(move(word));
+         T value;
+         word_stream >> value;
+         data.emplace_back(move(value));
+      }
+      dim_list.emplace_back(move(dim));
+      data_list.emplace_back(move(data));
+   }
+   return make_tuple(move(dim_list), move(data_list));
+}
+
+auto read_arch(istream& input, bool ignore_index = true, bool ignore_header = true) {
+   string line, word;
+   stringstream line_stream, word_stream;
+   if(ignore_header) {
+      getline(input, line);
+   }
    vec<int> C;
    vec<string> AF;
-   getline(arch_stream, line);
-   while(getline(arch_stream, line)) {
-      stringstream line_stream(line);
-      getline(line_stream, word, ',');
-      getline(line_stream, word, ',');
-      C.push_back(stoi(word));
-      getline(line_stream, word, ',');
-      AF.push_back(word);
-   }
-   return {C, AF};
-}
-
-auto read_hardtanh(const path& list_path) {
-   fstream list_stream(list_path);
-   string line, word;
-   vec<pair<double,double>> hardtanh_params;
-   getline(list_stream, line);
-   while(getline(list_stream, line)) {
-      replace(line.begin(),line.end(),',',' ');
-      stringstream line_stream(line);
-      double min = -1, max = 1;
-      line_stream >> word >> min >> max;
-      hardtanh_params.push_back({min,max});
-   }
-   return hardtanh_params;
-}
-
-template<typename T>
-auto read_matrix_list(const path& list_path) {
-   fstream list_stream(list_path);
-   string line, word;
-   ten3<T> list;
-   getline(list_stream, line);
-   while(getline(list_stream, line)) {
-      replace(line.begin(),line.end(),',',' ');
-      stringstream line_stream(line);
-      int n, m;
-      line_stream  >> std::noboolalpha >> word >> n >> m;
-      mat<T> matrix(n,vec<T>(m));
-      for(int i = 0; i < n; ++i)
-         for(int j = 0; j < m; ++j) {
-            T value;
-            line_stream >> std::noboolalpha >> value;
-            matrix[i][j] = value;
-         }
-      list.push_back(matrix);
-   }
-   return list;
-}
-
-template<typename T>
-auto read_vector_list(const path& list_path) {
-   fstream list_stream(list_path);
-   string line, word;
-   mat<T> list;
-   getline(list_stream, line);
-   while(getline(list_stream, line)) {
-      replace(line.begin(),line.end(),',',' ');
-      stringstream line_stream(line);
-      int n;
-      line_stream >> std::noboolalpha >> word >> n;
-      vec<T> vector(n);
-      for(int i = 0; i < n; ++i) {
-         T value;
-         line_stream >> std::noboolalpha >> value;
-         vector[i] = value;
+   vec<pair<double,double>> HT;
+   vec<optional<double>> Drop, L1w, L1a;
+   while(getline(input, line)) {
+      line_stream.str(move(line));
+      if(ignore_index) {
+         getline(line_stream, word, ',');
       }
-      list.push_back(vector);
+      int k;                            word_stream.str(move(word)); word_stream >> k;    getline(line_stream, word, ',');
+      optional<string> af;              word_stream.str(move(word)); word_stream >> af;   getline(line_stream, word, ',');
+      optional<pair<double,double>> ht; word_stream.str(move(word)); word_stream >> ht;   getline(line_stream, word, ',');
+      optional<double> drop;            word_stream.str(move(word)); word_stream >> drop; getline(line_stream, word, ',');
+      optional<double> l1w;             word_stream.str(move(word)); word_stream >> l1w;  getline(line_stream, word, ',');
+      optional<double> l1a;             word_stream.str(move(word)); word_stream >> l1a;  getline(line_stream, word, ',');
+      C.emplace_back(k);
+      AF.emplace_back(move(af.value_or("None")));
+      HT.emplace_back(move(ht.value_or({-1,1})));
+      Drop.emplace_back(move(drop));
+      L1w.emplace_back(move(l1w));
+      L1a.emplace_back(move(l1a));
    }
-   return list;
+   return make_tuple(move(C), move(AF), move(HT), move(Drop), move(L1w), move(L1a));
 }
 
-template<typename T>
-auto read_vector(const path& vector_path) {
-   fstream vector_stream(vector_path);
-   string line, word;
-   vec<T> vector;
-   getline(vector_stream, line);
-   while(getline(vector_stream, line)) {
-      replace(line.begin(), line.end(),',',' ');
-      stringstream line_stream(line);
-      T value;
-      line_stream >> std::noboolalpha >> word >> value;
-      vector.push_back(value);
-   }
-   return vector;
-}
-
-optional<unordered_map<string,pair<optional<vec<string>>,int>>> process_opts(int argc, const char* argv[]) {
-   unordered_map<string,pair<optional<vec<string>>,int>> opts = {
-      {"load_path", {{},1}},
-      {"load_name", {{},1}},
-      {"save_path", {{},1}},
-      {"save_name", {{},1}},
-      {"time_limit", {{},1}},
-      {"solution_limit", {{},1}},
-      {"iteration_limit", {{},1}},
-      {"node_limit", {{},1}},
-      {"opt_tol", {{},1}},
-      {"best_obj_stop", {{},1}},
-      {"feas_tol", {{},1}},
-      {"int_feas_tol", {{},1}},
-      {"no_log_to_console", {{},0}},
-      {"no_save_sols", {{},0}},
-      {"no_save_log", {{},0}},
-      {"no_save_json", {{},0}},
-      {"no_save_sol", {{},0}},
-      {"no_save_mst", {{},0}},
-      {"no_save_ilp", {{},0}},
-      {"no_save_lp", {{},0}},
-      {"no_optimize", {{},0}},
-      {"obj_type", {{},1}},
-      {"use_precision", {{},0}},
-      {"use_bias", {{},0}},
-      {"use_mask", {{},0}},
-      {"use_PReLU", {{},0}},
-      {"use_leakyReLU", {{},0}},
-      {"use_hardtanh", {{},0}}
+variant< unordered_map< string, vec<string> >, string > process_opts(int argc, const char* argv[]) {
+   constexpr unordered_map< string, int > opts = {
+      {"load_path", 1},
+      {"load_name", 1},
+      {"save_path", 1},
+      {"save_name", 1},
+      {"time_limit", 1},
+      {"solution_limit", 1},
+      {"iteration_limit", 1},
+      {"node_limit", 1},
+      {"opt_tol", 1},
+      {"best_obj_stop", 1},
+      {"feas_tol", 1},
+      {"int_feas_tol", 1},
+      {"no_log_to_console", 0},
+      {"no_save_sols", 0},
+      {"no_save_log", 0},
+      {"no_save_json", 0},
+      {"no_save_sol", 0},
+      {"no_save_mst", 0},
+      {"no_save_ilp", 0},
+      {"no_save_lp", 0},
+      {"no_optimize", 0},
+      {"use_precision", 0},
+      {"use_bias", 0},
+      {"use_mask", 0},
+      {"use_leakyReLU", 0},
+      {"use_bits", 0},
+      {"zero_tolerance", 1}
    };
+   unordered_map< string, vec<string> > processed_opts;
    int argi = 1;
    string arg, arg_name;
    while(argi < argc) {
-      arg = argv[argi];
-      if(arg.starts_with("--")) {
-         arg_name = arg.substr(2);
-         if(opts.contains(arg_name)) {
-            int i = 1;
-            for(opts[arg_name].first = vec<string>(); i < opts[arg_name].second && argi + i < argc; ++i)
-               (*opts[arg_name].first).push_back(argv[argi + i]);
-            argi += i;
+      if(arg = argv[argi]; !arg.starts_with("--")) {
+         return format("Error: {} no es una opcion", arg);
+      }
+      else if(arg_name = arg.substr(2); !opts.contains(arg_name)) {
+         return format("Error: No existe la opcion {}", arg_name);
+      }
+      else if(int max_argi = argi + opts[arg_name]; max_argi >= argc) {
+         return format("Error: Faltaron {} argumentos", max_argi - argc + 1);
+      }
+      else {
+         processed_opts[arg_name] = vec<string>();
+         for(++argi; argi < max_argi; ++argi) {
+            if(arg = argv[argi]; arg.starts_with("--")) {
+               return format("Error: La opcion {} se puso antes de todos los argumentos de la opcion anterior", arg);
+            }
+            else {
+               processed_opts[arg_name].emplace_back(arg);
+            } 
          }
-         else
-            return {};
       }
    }
-   return optional(opts);
+   return processed_opts;
+}
+
+template<typename T> 
+vec<T> make_tensor(int d) {
+   return vec<T>(d);
+}
+
+template<typename T, typename... Args> 
+vec<T> make_tensor(int d, Args... args) {
+   return vec<T>(d,make_tensor<T>(args...));
+}
+
+template<typename T, template<typename> typename Tensor> 
+void fill(Tensor<T>& tensor, const vec<T>& data) {
+
+
+}
+
+template<typename Func>
+void process_arg(const unordered_map< string, vec<string> >& opts, const string& arg_name, Func f, bool negate = false) {
+   if(opts.contains(arg_name) ^ negate) {
+      f(opts[argname]);
+   }
 }
 
 int main(int argc, const char* argv[]) try {
-   // lectura de la entrada
-   auto opts = process_opts(argc,argv);
-   if(!opts) {
-      cout << "Argumentos invalidos\n";
+   auto e_opts = process_opts(argc,argv);
+   if(has_alternative<string>(e_opts)) {
+      cout << get<string>(e_opts);
       return 0;
    }
-   path save_path("");
-   path load_path("");
-   string save_name("model");
-   string load_name("");
-   auto opt = (*opts)["load_path"].first;
-   if(opt)
-      load_path = path((*opt)[0]);
-   opt = (*opts)["save_path"].first;
-   if(opt)
-      save_path = path((*opt)[0]);
-   opt = (*opts)["save_name"].first;
-   if(opt)
-      save_name = format("{}_", (*opt)[0]);
-   opt = (*opts)["load_name"].first;
-   if(opt)
-      load_name = format("{}_", (*opt)[0]);
-      
+   auto opts = get<unordered_map<string,vec<string>>>(e_opts);
+   path save_path = opts.contains("save_path") ? opts["save_path"][0] : "";
+   path load_path = opts.contains("load_path") ? opts["load_path"][0] : "";
+   string save_name = opts.contains("save_name") ? opts["save_name"][0] : "model";
+   string load_name = opts.contains("load_name") ? opts["load_name"][0] : "";
    path arch_path = load_path / format("{}arch.csv",load_name);
-   path cases_path = load_path / format("{}cases.csv",load_name);
-   path labels_path = load_path / format("{}labels.csv",load_name);
-   path digits_path = load_path / format("{}digits.csv",load_name);
-
-   auto [C, AF] = read_arch(arch_path);
-   auto cases = read_matrix<double>(cases_path);
-   auto labels = read_matrix<double>(labels_path);
-   auto digits = read_matrix_list<int>(digits_path);
-   int T = cases.size();
-   int L = C.size();
-
-   optional<ten3<int>> precision;
-   opt = (*opts)["use_precision"].first;
-   if(opt)
-      precision = optional(read_matrix_list<int>(load_path / format("{}precision.csv",load_name)));
-   optional<vec<double>> bias;
-   opt = (*opts)["use_bias"].first;
-   if(opt)
-      bias = optional(read_vector<double>(load_path / format("{}bias.csv",load_name)));
-   optional<ten3<bool>> mask;
-   opt = (*opts)["use_mask"].first;
-   if(opt)
-      mask = optional(read_matrix_list<bool>(load_path / format("{}mask.csv",load_name)));
-   optional<vec<double>> leakyReLU;
-   opt = (*opts)["use_leakyReLU"].first;
-   if(opt)
-      leakyReLU = optional(read_vector<double>(load_path / format("{}LeakyReLU.csv",load_name)));
-   optional<mat<double>> PReLU;
-   opt = (*opts)["use_PReLU"].first;
-   if(opt)
-      PReLU = optional(read_vector_list<double>(load_path / format("{}PReLU.csv",load_name)));
-   optional<vec<pair<double,double>>> hardtanh;
-   opt = (*opts)["use_hardtanh"].first;
-   if(opt)
-      hardtanh = optional(read_hardtanh(load_path / format("{}hardtanh.csv",load_name)));
-   
+   path features_path = load_path / format("{}ftr.csv",load_name);
+   path class_targets_path = load_path / format("{}cls_tgt.csv",load_name);
+   path regression_targets_path = load_path / format("{}reg_tgt.csv",load_name);
+   const auto& [C, AF, hardtanh, dropout, l1w_norm, l1a_norm] = read_arch(fstream(arch_path));
+   const auto& features = read_matrix_from_csv<double>(fstream(features_path));
+   const auto& regression_targets = read_matrix_from_csv<double>(fstream(regression_targets_path));
+   const auto& class_targets = read_matrix_from_csv<double>(fstream(class_targets_path));
+   int T = features.size(), L = C.size();
+   if(opts.contains("use_bits")) {
+      path bits_path = load_path / format("{}bits.csv",load_name);
+      const auto& [dim, data] = read_list_from_csv<int>(fstream(bits_path));
+   }
+   if(opts.contains("use_precision")) {
+      path bits_path = load_path / format("{}precision.csv",load_name);
+      const auto& [dim, data] = read_list_from_csv<int>(fstream(bits_path));
+   }
+   if(opts.contains("use_bias")) {
+      path bits_path = load_path / format("{}bias.csv",load_name);
+      const auto& [dim, data] = read_list_from_csv<int>(fstream(bits_path));
+   }
+   if(opts.contains("use_mask")) {
+      path bits_path = load_path / format("{}mask.csv",load_name);
+      const auto& [dim, data] = read_list_from_csv<int>(fstream(bits_path));
+   }
+   if(opts.contains("use_leakyReLU")) {
+      path bits_path = load_path / format("{}LeakyReLU.csv",load_name);
+      const auto& [dim, data] = read_list_from_csv<int>(fstream(bits_path));
+   }
    string file_path = save_path / save_name;
    string ResultFile = format("{}.sol",file_path);
+   string SolFiles = file_path;
+   string LogFile = format("{}.log",file_path);
    GRBEnv ambiente;
-   
-   opt = (*opts)["no_save_sols"].first;
-   if(!opt) {
-      string SolFiles = file_path;   
-      ambiente.set(GRB_StringParam_SolFiles, SolFiles);
-   }
-   opt = (*opts)["no_save_log"].first;
-   if(!opt) {
-      string LogFile = format("{}.log",file_path);
-      ambiente.set(GRB_StringParam_LogFile, LogFile);
-   }
-   int LogToConsole = (*opts)["no_log_to_console"].first.has_value();
+   stringstream argstream;
+   int LogToConsole = !opts.contains("no_log_to_console");
    ambiente.set(GRB_IntParam_LogToConsole, LogToConsole);
-   opt = (*opts)["best_obj_stop"].first;
-   if(opt) {
-      double BestObjStop = stod((*opt)[0]);
+   process_args(opts, "no_save_sols", [&SolFiles,&ambiente](const auto& args) { ambiente.set(GRB_StringParam_SolFiles, SolFiles); }, true);
+   process_args(opts, "no_save_log", [&LogFile,&ambiente](const auto& args) { ambiente.set(GRB_StringParam_LogFile, LogFile); }, true);
+   process_args(opts, "best_obj_stop", [&argstream,&ambiente](const auto& args) {
+      double BestObjStop;
+      argstream.str(args[0]);
+      argstream >> BestObjStop;
       ambiente.set(GRB_DoubleParam_BestObjStop, BestObjStop);
-   }
-   opt = (*opts)["feas_tol"].first;
-   if(opt) {
-      double FeasibilityTol = stod((*opt)[0]);
+   });
+   double zero_tolerance = 0.001;
+   process_args(opts, "zero_tolerance", [&argstream,&zero_tolerance](const auto& args) {
+      argstream.str(args[0]);
+      argstream >> zero_tolerance;
+   });
+   process_args(opts, "feas_tol", [&argstream,&ambiente](const auto& args) {
+      double FeasibilityTol;
+      argstream.str(args[0]);
+      argstream >> FeasibilityTol;
       ambiente.set(GRB_DoubleParam_FeasibilityTol, FeasibilityTol);
-   }
-   opt = (*opts)["int_feas_tol"].first;
-   if(opt) {
-      double IntFeasTol = stod((*opt)[0]);
-      ambiente.set(GRB_DoubleParam_IntFeasTol, IntFeasTol); 
-   }
-   opt = (*opts)["iteration_limit"].first;
-   if(opt) {
-      double IterationLimit = stod((*opt)[0]);
-      ambiente.set(GRB_DoubleParam_IterationLimit, IterationLimit); 
-   }
-   opt = (*opts)["opt_tol"].first;
-   if(opt) {
-      double OptimalityTol = stod((*opt)[0]);
-      ambiente.set(GRB_DoubleParam_OptimalityTol, OptimalityTol);   
-   }
-   opt = (*opts)["solution_limit"].first;
-   if(opt) {
-      int SolutionLimit = stoi((*opt)[0]);
-      ambiente.set(GRB_IntParam_SolutionLimit, SolutionLimit);    
-   }
-   opt = (*opts)["time_limit"].first;
-   if(opt) {
-      double TimeLimit = stod((*opt)[0]);
-      ambiente.set(GRB_DoubleParam_TimeLimit, TimeLimit);     
-   }
-   opt = (*opts)["node_limit"].first;
-   if(opt) {
-      double NodeLimit = stod((*opt)[0]);
-      ambiente.set(GRB_DoubleParam_NodeLimit, NodeLimit);     
-   }
+   });
+   process_args(opts, "int_feas_tol", [&argstream,&ambiente](const auto& args) {
+      double IntFeasTol;
+      argstream.str(args[0]);
+      argstream >> IntFeasTol;
+      ambiente.set(GRB_DoubleParam_IntFeasTol, IntFeasTol);
+   });
+   process_args(opts, "iteration_limit", [&argstream,&ambiente](const auto& args) {
+      double IterationLimit;
+      argstream.str(args[0]);
+      argstream >> IterationLimit;
+      ambiente.set(GRB_DoubleParam_IterationLimit, IterationLimit);
+   });
+   process_args(opts, "opt_tol", [&argstream,&ambiente](const auto& args) {
+      double OptimalityTol;
+      argstream.str(args[0]);
+      argstream >> OptimalityTol;
+      ambiente.set(GRB_DoubleParam_OptimalityTol, OptimalityTol);
+   });
+   process_args(opts, "solution_limit", [&argstream,&ambiente](const auto& args) {
+      int SolutionLimit;
+      argstream.str(args[0]);
+      argstream >> SolutionLimit;
+      ambiente.set(GRB_IntParam_SolutionLimit, SolutionLimit);
+   });
+   process_args(opts, "time_limit", [&argstream,&ambiente](const auto& args) {
+      double TimeLimit;
+      argstream.str(args[0]);
+      argstream >> TimeLimit;
+      ambiente.set(GRB_DoubleParam_TimeLimit, TimeLimit);
+   });
+   process_args(opts, "node_limit", [&argstream,&ambiente](const auto& args) {
+      double NodeLimit;
+      argstream.str(args[0]);
+      argstream >> NodeLimit;
+      ambiente.set(GRB_DoubleParam_NodeLimit, NodeLimit);
+   });
+
    int JSONSolDetail = 1;
    ambiente.set(GRB_IntParam_JSONSolDetail, JSONSolDetail);
-   bool optimize = !(*opts)["no_optimize"].first;
-   bool save_lp = !(*opts)["no_save_lp"].first;
-   bool save_ilp = !(*opts)["no_save_ilp"].first; 
-   bool save_sol = !(*opts)["no_save_sol"].first;
-   bool save_mst = !(*opts)["no_save_mst"].first;
-   bool save_json = !(*opts)["no_save_json"].first; 
-
-   opt = (*opts)["obj_type"].first;
-   Obj_Func error_type = Obj_Func::SUM;
-   if(opt)
-      if((*opt)[0] == "SUM")
-         error_type = Obj_Func::SUM;
-      else if((*opt)[0] == "MAX_e")
-         error_type = Obj_Func::MAX_e;
-      else if((*opt)[0] == "MAX_E")
-         error_type = Obj_Func::MAX_E;
-      else {
-         std::cout << format("Error en el argumento {}\n", (*opt)[0]);
-         return 0;
-      }
+   bool optimize = !opts.contains("no_optimize");
+   bool save_lp = !opts.contains("no_save_lp");
+   bool save_ilp = !opts.contains("no_save_ilp"); 
+   bool save_sol = !opts.contains("no_save_sol");
+   bool save_mst = !opts.contains("no_save_mst");
+   bool save_json = !opts.contains("no_save_json"); 
 
    // construcción del modelo
-   GRBModel modelo = get_model(ambiente,T,L,C,AF,digits,cases,labels,error_type,mask,precision,bias,leakyReLU,PReLU,hardtanh);
+   GRBModel modelo = get_model(ambiente,T,L,C,AF,digits,cases,labels,class_index,regression_index,mask,precision,bias,leakyReLU,hardtanh,dropout,l1a_norm,l1w_norm,zero_tolerance);
    // ------ resolución del modelo
    if(save_lp)
       modelo.write(path(format("{}.lp",file_path)));
@@ -680,15 +651,18 @@ int main(int argc, const char* argv[]) try {
          case GRB_NODE_LIMIT :
          case GRB_TIME_LIMIT :
          case GRB_INTERRUPTED :
-            if(save_sol)
+            if(save_sol) {
                modelo.write(format("{}.sol",file_path));
-            if(save_json)
+            }
+            if(save_json) {
                modelo.write(format("{}.json",file_path));
-            if(save_mst)
+            } 
+            if(save_mst) {
                modelo.write(format("{}.mst",file_path));
+            }
             break;
          case GRB_INFEASIBLE :
-            std::cout << "Modelo infactible\n";
+            cout << "Modelo infactible\n";
             if(save_ilp) {
                modelo.computeIIS( );
                modelo.write(format("{}.ilp",file_path));

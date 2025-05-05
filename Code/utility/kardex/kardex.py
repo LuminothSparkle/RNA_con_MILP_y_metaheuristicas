@@ -3,6 +3,8 @@ from pandas import (DataFrame, read_csv)
 from pathlib import Path
 import argparse
 from argparse import ArgumentParser
+import pandas
+import numpy
 
 argparser = ArgumentParser()
 argparser.add_argument('--save_path', '-sp')
@@ -21,12 +23,13 @@ calificacion_dict = {
     "NA" : 4
 }
 order = 'IPO'
+len_order = len(order)
 
 def Tri2Int(code : str)  -> int:
-    return int(code[0:1]) * len(order) + order.index(code[2])
+    return int(code[0:2]) * len_order + order.index(code[2])
 
 def Int2Tri(num : int)  -> str:
-    return f'{num // len(order):02d}{order[num % len(order)]}'
+    return f'{num // len_order:02d}{order[num % len_order]}'
 
 def write_DB(data_frames : dict[str,DataFrame], save_path : Path, overwrite : bool = True) :
     file_paths = []
@@ -45,7 +48,7 @@ def separate_targets_and_features(load_path : Path, save_path : Path, overwrite 
             save_dir = save_path / file.stem
             targets_path = save_dir / 'targets.csv'
             features_path = save_dir / 'features.csv'
-            save_dir.mkdir(parents = True,exist_ok = True)
+            save_dir.mkdir(parents = True, exist_ok = True)
             if (targets_path.exists() or features_path.exists()) and not overwrite :
                 return False
             path_list += [(file, features_path, targets_path)]
@@ -63,53 +66,42 @@ def process_kardex(load_path : Path) :
     kardex_file = load_path / 'kardex.json'
     with kardex_file.open(mode = 'rt', encoding = 'utf-8') as text_data :
         kardex_dict = json.load(text_data)
-    uea_req_list = ['clave','creditos','obligatoria']
-    new_info_list = ['egreso','baja', 'ultimo trimestre activo', 'creditos obligatorios', 'creditos optativos']
-    new_info_types = ['Int64','Int64', 'Int64', 'Int64', 'Int64']
-    kardex_dict, career_dict = {}, {}
+    career_dict = {}
     for name, students in kardex_dict.items() :
-        career_data = dict()
-        code = name.strip().split()[1]
+        career_data = {}
+        _,code = name.strip().split()
         career_path = plans_dir / f'{code}.json'
         with career_path.open(mode = 'rt', encoding = 'utf-8') as text_data :
             career_data = json.load(text_data)
-        uea_frame = DataFrame([ [uea[data_req] for data_req in uea_req_list] for uea in career_data['ueas'].values() ], columns = uea_req_list)
-        uea_frame = uea_frame.astype({'clave' : 'string'}, copy = False)
-        uea_frame.set_index('clave', inplace = True)
-        uea_info_list = [ f'{code}_{suf}' for suf in ['ini', 'cal', 'int', 'REC', 'GLO'] for code in uea_frame.index.to_list() ]
-        uea_info_types = [ dtype for dtype in ['Int64','Float64','Int64','Float64','Float64'] for _ in range(len(uea_frame.index.to_list())) ]
-        career_frame = DataFrame(index = range(len(students)), columns = [*new_info_list, *uea_info_list], dtype = 'Int64')
-        career_frame = career_frame.astype(dtype = dict(zip([*new_info_list, *uea_info_list],[*new_info_types,*uea_info_types])), copy = False)
-        career_frame.fillna(0,inplace = True)
-        for idx, student in enumerate(students) :
-            career_frame.at[idx,'egreso'] = int(student['estado'] == 'egreso')
-            career_frame.at[idx,'baja'] = int(student['estado'] == 'baja')
-            first_tri = 10000
-            for code, intents in student['ueas'].items() :
-                for intent in intents :
-                    tri = Tri2Int(intent['trimestre'])
-                    first_tri = min(first_tri,tri)
-                    career_frame.at[idx,'ultimo trimestre activo'] = max(career_frame.at[idx,'ultimo trimestre activo'],tri)
-            career_frame.at[idx,'ultimo trimestre activo'] = career_frame.at[idx,'ultimo trimestre activo'] - first_tri
-            for code, intents in student['ueas'].items() :
-                if code in uea_frame.index.to_list() :
-                    career_frame.at[idx,f'{code}_int'] = len(intents)
-                    career_frame.at[idx,f'{code}_ini'] = 10000
-                    if any(intent['calificacion'] != 'NA' for intent in intents) :
-                        if uea_frame.at[code,'obligatoria'] :
-                            career_frame.at[idx,'creditos obligatorios'] = career_frame.at[idx,'creditos obligatorios'] + uea_frame.at[code,'creditos']
-                        else :
-                            career_frame.at[idx,'creditos optativos'] = career_frame.at[idx,'creditos optativos'] + uea_frame.at[code,'creditos']
-                    for intent in intents :
-                        tri = Tri2Int(intent['trimestre']) - first_tri
-                        career_frame.at[idx,f'{code}_ini'] = min(career_frame.at[idx,f'{code}_ini'],tri)
-                        career_frame.at[idx,f'{code}_cal'] = career_frame.at[idx,f'{code}_cal'] + float(calificacion_dict[intent['calificacion']])
-                        career_frame.at[idx,f'{code}_REC'] = career_frame.at[idx,f'{code}_REC'] + float(int(intent['evaluacion'] == 'REC.'))
-                        career_frame.at[idx,f'{code}_GLO'] = career_frame.at[idx,f'{code}_GLO'] + float(int(intent['evaluacion'] == 'GLO.'))
-                    career_frame.at[idx,f'{code}_GLO'] /= len(intents)
-                    career_frame.at[idx,f'{code}_REC'] /= len(intents)
-                    career_frame.at[idx,f'{code}_cal'] /= len(intents)
-        career_dict[name] = career_frame
+        dataframe_list = []
+        for student in students :
+            student_dict = {'estado' : '', 'trimestre' : 0, 'creditos obligatorios' : 0, 'creditos optativos' : 0}
+            trimesters = [ Tri2Int(intent['trimestre']) for intents in student['ueas'].values() for intent in intents ]
+            min_tri = numpy.min(trimesters)
+            max_tri = numpy.max(trimesters)
+            innactivity_tri = Tri2Int('25I') - max_tri + 1
+            if (student['estado']  == 'egreso' or student['estado']  == 'baja' or student['estado']  == 'activo' and innactivity_tri > 6) :
+                student_dict['trimestre'] = max_tri - min_tri + 1
+                student_dict['estado'] = student['estado'] if student['estado']  == 'egreso' or student['estado']  == 'baja' else 'baja' # type: ignore
+                for code in career_data['ueas'] :
+                    if code in student['ueas'] :
+                        if any(intent['calificacion'] != 'NA' for intent in student['ueas'][code]) :
+                            if career_data['ueas'][code]['obligatoria'] :
+                                student_dict['creditos obligatorios'] += career_data['ueas'][code]['creditos']
+                            else :
+                                student_dict['creditos optativos'] += career_data['ueas'][code]['creditos']
+                        for intent in student['ueas'][code] :
+                            student_dict[f'{code}_ini'] = numpy.min( [Tri2Int(intent['trimestre']) - min_tri + 1 for intent in student['ueas'][code]] )
+                            student_dict[f'{code}_las'] = numpy.max( [Tri2Int(intent['trimestre']) - min_tri + 1 for intent in student['ueas'][code]] )
+                            student_dict[f'{code}_cal'] = numpy.mean( [calificacion_dict[intent['calificacion']] for intent in student['ueas'][code]] ) # type: ignore
+                            student_dict[f'{code}_eva'] = numpy.mean( [int(intent['evaluacion'] == 'GLO.') for intent in student['ueas'][code]] ) # type: ignore
+                    else :
+                        student_dict[f'{code}_ini'] = 0
+                        student_dict[f'{code}_las'] = 0
+                        student_dict[f'{code}_cal'] = 0
+                        student_dict[f'{code}_eva'] = 0
+                dataframe_list += [DataFrame(student_dict, index = [0])]
+        career_dict[name] = pandas.concat(dataframe_list, axis = 'index', join = 'outer', ignore_index = True).fillna(0)
     return career_dict
 
 def main(args : argparse.Namespace) :
@@ -134,8 +126,8 @@ def main(args : argparse.Namespace) :
         print(f'Cannot access {load_path} or isn\'t a directory')
         return None
     if args.gen_database :
-        if not (args.load_path / 'Plans').exists() :
-            print(f'{args.load_path / "Plans"} doesn\'t exists')
+        if not (load_path / 'Plans').exists() :
+            print(f'{load_path / "Plans"} doesn\'t exists')
             return None
         career_dict = process_kardex(load_path)
         write_DB(career_dict, save_path, not args.no_overwrite)
@@ -144,5 +136,5 @@ def main(args : argparse.Namespace) :
 
 if __name__ == '__main__' :
     import sys
-    sys.exit(main(argparser.parse_args(sys.argv)))
+    sys.exit(main(argparser.parse_args(sys.argv[1:])))
     

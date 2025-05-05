@@ -1,0 +1,14 @@
+time lapsed : 706417762000 ns
+time lapsed : 0 d  0 h 11 m 46 s 417 ms 762 mus   0 ns
+Total de instancias : 606
+Validacion cruzada con RepeatedStratifiedKFold(n_repeats=3, n_splits=10, random_state=None)
+Iteraciones totales : 30
+crossvalidation Estado               accuracy             : 93.673%
+crossvalidation Estado               precision            : 94.074%
+crossvalidation Estado               recall               : 93.673%
+crossvalidation Estado               average precision    : 95.283%
+crossvalidation Estado               balanced accuracy    : 94.026%
+crossvalidation Estado               roc auc              : 96.781%
+crossvalidation Estado               f1 score             : 93.695%
+crossvalidation Estado               log loss             : 0.4964523
+crossvalidation Estado               matthews corrcoef    : 0.8757788

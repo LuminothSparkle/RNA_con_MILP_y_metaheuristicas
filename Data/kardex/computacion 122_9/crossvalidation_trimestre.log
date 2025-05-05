@@ -1,0 +1,11 @@
+time lapsed : 2200522896000 ns
+time lapsed : 0 d  0 h 36 m 40 s 522 ms 896 mus   0 ns
+Total de instancias : 606
+Validacion cruzada con RepeatedKFold(n_repeats=3, n_splits=10, random_state=None)
+Iteraciones totales : 30
+crossvalidation Trimestre            absolute percentage  : 0.2196246
+crossvalidation Trimestre            absolute             : 3.539837
+crossvalidation Trimestre            squared              : 23.55766
+crossvalidation Trimestre            r2 score             : 69.921%
+crossvalidation Trimestre            d2 absolute          : 48.154%
+crossvalidation Trimestre            explained variance   : 81.049%

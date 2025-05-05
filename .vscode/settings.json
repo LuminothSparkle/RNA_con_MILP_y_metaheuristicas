@@ -74,7 +74,8 @@
     "span": "cpp",
     "sstream": "cpp",
     "variant": "cpp",
-    "any": "cpp"
+    "any": "cpp",
+    "ranges": "cpp"
   },
   "C_Cpp.vcFormat.space.betweenEmptySquareBrackets": true,
   "C_Cpp.vcFormat.space.betweenEmptyParameterListParentheses": true,
@@ -154,10 +155,10 @@
   "python.analysis.typeEvaluation.enableReachabilityAnalysis": true,
   "python.analysis.typeEvaluation.disableBytesTypePromotions": false,
   "python.linting.pylintEnabled": true,
-    "python.linting.enabled": true,
-    "python.linting.pylintArgs": [
-        "--rcfile",
-        "${workspaceFolder}/backend/.pylintrc"
-    ],
-    "C_Cpp.errorSquiggles": "disabled",
+  "python.linting.enabled": true,
+  "python.linting.pylintArgs": [
+    "--rcfile",
+    "${workspaceFolder}/backend/.pylintrc"
+  ],
+  "C_Cpp.errorSquiggles": "disabled"
 }

@@ -23,8 +23,8 @@ def get_dataframes(load_path : PurePath) :
     Class_index = Index(['no-recurrence-events', 'recurrence-events'])
 
     feature_columns = ['age', 'menopause', 'tumor-size', 'inv-nodes', 'node-caps', 'deg-malig', 'breast', 'breast-quad-left-right', 'breast-quad-low-up', 'breast-quad-central', 'irradiat']
-    feature_frame = DataFrame(index = indexes, columns = feature_columns, dtype = 'Int64')
-    target_frame = DataFrame(index = indexes, columns = ['Class'], dtype = 'Int64')
+    feature_frame = DataFrame(index = indexes, columns = feature_columns, dtype = 'Float64')
+    target_frame = DataFrame(index = indexes, columns = ['Class'], dtype = 'Float64')
     for idx in indexes :
         target_frame.at[idx,'Class'] = Class_index.to_list().index(breast_cancer_frame.at[idx,'Class'])
         feature_frame.at[idx,'age'] = age_index.to_list().index(breast_cancer_frame.at[idx,'age']) + 1

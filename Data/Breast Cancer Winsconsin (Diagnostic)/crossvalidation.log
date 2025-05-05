@@ -1,0 +1,14 @@
+time lapsed : 2329503352600 ns
+time lapsed : 0 d  0 h 38 m 49 s 503 ms 352 mus 600 ns
+Total de instancias : 569
+Validacion cruzada con RepeatedStratifiedKFold(n_repeats=3, n_splits=10, random_state=None)
+Iteraciones totales : 30
+crossvalidation Diagnosis            accuracy             : 96.719%
+crossvalidation Diagnosis            precision            : 96.810%
+crossvalidation Diagnosis            recall               : 96.719%
+crossvalidation Diagnosis            average precision    : 97.832%
+crossvalidation Diagnosis            balanced accuracy    : 96.343%
+crossvalidation Diagnosis            roc auc              : 98.183%
+crossvalidation Diagnosis            f1 score             : 96.708%
+crossvalidation Diagnosis            log loss             : 0.206255
+crossvalidation Diagnosis            matthews corrcoef    : 0.9306559
