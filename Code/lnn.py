@@ -2,18 +2,20 @@ import torch
 from torch.nn import (Sequential, Module, Linear, BatchNorm1d, Dropout, ReLU, ReLU6, PReLU,
                       LeakyReLU, Hardsigmoid, Hardtanh, Tanh, Sigmoid, LogSoftmax, Softmax, 
                       Softmin, Softplus, Mish, SiLU, ELU, GELU, CELU, RReLU, SELU, Hardswish,
-                      Identity, LogSigmoid, Softsign)
+                      Identity, LogSigmoid, Softsign, ModuleDict, ModuleList)
 from torch import Tensor
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import LRScheduler
 from torch.masked import as_masked_tensor
 from torch.nn.init import xavier_normal_, xavier_uniform_, kaiming_uniform_, uniform_, trunc_normal_, orthogonal_, sparse_, kaiming_normal_, normal_
-from torch.nn.utils import fuse_linear_bn_eval
+from torch.nn.utils import fuse_linear_bn_weights
+from torch.nn.functional import dropout
 
 from collections.abc import Iterable, Callable
 from typing import Any
 from numpy import ndarray, array
+import numpy
 
 class LinealNN(Module):
     functional_dict : dict[str,type[Module]] = {
@@ -52,12 +54,11 @@ class LinealNN(Module):
         'sparse' : sparse_, # type: ignore
         'orthogonal' : orthogonal_
     }
-    dropout_layers : dict[int,tuple[Dropout,Linear]]
-    batch_norm_layers : dict[int,BatchNorm1d]
-    linear_layers : list[Linear]
-    activation_layers : dict[int,Module]
-    sequential_layers : list[Sequential]
-    connect_dropout_layers : dict[int,Dropout]
+    dropout_layers : ModuleDict
+    batch_norm_layers : ModuleDict
+    linear_layers : ModuleDict
+    activation_layers : ModuleDict
+    sequential_layers : ModuleDict
     C : list[int]; L : int; phi : dict[int,str]
     act : list[Tensor]
     best_model_dict : dict[str,Any]
@@ -66,10 +67,12 @@ class LinealNN(Module):
     hyperparams : dict[str,Any]
         
     def __init__(self, C : Iterable[int], hyperparams : dict[str,Any] = {}) :
+        super().__init__()
         self.C = list(C); self.L = len(self.C) - 1
-        self.hyperparams = {}
-        for param in ['bias init', 'weight init', 'connect dropout', 'dropout', 'batch normalization', 'activation function',
-                      'weight mask', 'l1 activation regularization', 'l1 weight regularization', 'l2 activation regularization', 'l2 weight regularization'] :
+        self.hyperparams = { 'C' : list(C) }
+        self.hyperparams['L'] =  len(self.hyperparams['C']) - 1
+        for param in ['bias init', 'weight init', 'dropout', 'batch normalization', 'activation function', 'weight mask','connect dropout', 
+                      'l1 weight regularization', 'l2 weight regularization', 'l1 activation regularization', 'l2 activation regularization'] :
             self.hyperparams[param] = {}
             if param in hyperparams and hyperparams[param] is not None :
                 if isinstance(hyperparams[param], dict) :
@@ -78,44 +81,42 @@ class LinealNN(Module):
                     self.hyperparams[param] = {k : data for k,data in enumerate(hyperparams[param])}
                 else :
                     self.hyperparams[param] = {k : hyperparams[param] for k in range(self.L)}
-        
         with torch.device('cuda') :
-            super().__init__()
             self.bias_init = [ self.hyperparams['bias init'][k] if k in self.hyperparams['bias init'] else torch.ones for k in range(self.L) ]
-            self.sequential_layers = [ Sequential() for _ in range(self.L) ] 
-            self.dropout_layers = { k : (Dropout(d, inplace = True), Linear(self.C[k] + 1, self.C[k] + 1, bias = False)) for k,d in self.hyperparams['dropout'].items() }
-            self.batch_norm_layers = {k : BatchNorm1d(num_features = self.C[k] + 1,**dict(kw)) for k,kw in self.hyperparams['batch normalization'].items()}
-            self.linear_layers = [ Linear(self.C[k] + 1,self.C[k + 1], bias = False) for k in range(self.L) ]
-            self.activation_layers = {k : self.functional_dict[name](**kw) for k,(name,kw) in self.hyperparams['activation function'].items()} # type: ignore
-            self.connect_dropout_layers = { k : Dropout(d, inplace = False) for k,d in self.hyperparams['connect dropout'].items() }
+            self.sequential_layers = ModuleDict({ str(k) : Sequential() for k in range(self.L) } )
+            self.dropout_layers = ModuleDict({ str(k) : Dropout(p, inplace = True) for k,p in self.hyperparams['dropout'].items() })
+            self.batch_norm_layers = ModuleDict({ str(k) : BatchNorm1d(num_features = self.C[k] + 1,**dict(kw)) for k,kw in self.hyperparams['batch normalization'].items() })
+            self.linear_layers = ModuleDict({ str(k) : Linear(self.C[k] + 1,self.C[k + 1], bias = False) for k in range(self.L) })
+            self.activation_layers = ModuleDict({ str(k) : self.functional_dict[name](**kw) for k,(name,kw) in self.hyperparams['activation function'].items() }) # type: ignore
             for weight,init in ((self.linear_layers[k].weight, init) for k,init in self.hyperparams['weight init'].items()) :
                 if isinstance(init,tuple) :
                     init,kw = init
                     self.init_dict[init](weight.data, **kw) # type: ignore
                 elif isinstance(init, Tensor) :
-                    weight.data = init
+                    weight = init
             for weight,mask in ((self.linear_layers[k].weight, mask) for k,mask in self.hyperparams['weight mask'].items()) :
-                weight.data = as_masked_tensor(data = weight.data, mask = mask)
-            for k,seq,drop,linear in ((k,self.sequential_layers[k], drop, linear) for k,(drop,linear) in self.dropout_layers.items()) :
-                linear.weight.data = (1 - drop.p) * torch.eye(self.C[k] + 1,self.C[k] + 1)
-                linear.weight.data.requires_grad_(False)
-                seq.add_module(f'Scale dropout {k}',linear)
-                seq.add_module(f'Dropout {k}',drop)
-            for k,seq,batch in ((k,self.sequential_layers[k], batch) for k,batch in self.batch_norm_layers.items()) :
-                seq.add_module(f'Batch normalization {k}',batch)
-            for k,seq,linear in ((k,self.sequential_layers[k], linear) for k,linear in enumerate(self.linear_layers)) :
+                weight = as_masked_tensor(data = weight, mask = mask)
+            for k,drop in self.dropout_layers.items() :
+                self.sequential_layers[k].add_module(f'Dropout {k}',drop)
+            for k,batch in self.batch_norm_layers.items() :
+                self.sequential_layers[k].add_module(f'Batch normalization {k}',batch)
+            for (k,seq),linear in zip(self.sequential_layers.items(),self.linear_layers.values()) :
                 seq.add_module(f'Linear {k}',linear)
-            for k,seq,act in ((k,self.sequential_layers[k], act) for k,act in self.activation_layers.items()) :
-                seq.add_module(f'Activation {k}',act)
-            for k,layer in enumerate(self.sequential_layers) :
+            for k,act in self.activation_layers.items() :
+                self.sequential_layers[k].add_module(f'Activation {k}',act)
+            for k,layer in self.sequential_layers.items() :
                 self.add_module(f'Sequential {k}', layer)
 
     def forward(self, input_tensor : Tensor) -> Tensor :
         with torch.device('cuda') :
             X = input_tensor.cuda()
+            bias = torch.ones((X.size(dim = 0), self.hyperparams['L']))
+            if self.training :
+                for k,b_init in self.hyperparams['bias init'].items() :
+                    bias[:,k] = b_init(X.size(dim = 0))
             self.act = []
-            for b_init,layer in zip(self.bias_init,self.sequential_layers) :
-                X = layer(torch.column_stack(( X, b_init(X.size(dim = 0)) )))
+            for k,layer in enumerate(self.sequential_layers.values()) :
+                X = layer(torch.concat((X,bias[:,k].unsqueeze(dim = 1)), dim = 1))
                 self.act += [X]
         return X
 
@@ -128,6 +129,12 @@ class LinealNN(Module):
         loss['best'] = float('inf')
         if test_dataloader is not None :
             loss['test'] = ndarray((epochs, len(test_dataloader)), dtype = float)
+            with torch.inference_mode() :
+                self.eval()
+                loss['start test'] = array( [loss_fn(self(X), y.cuda()).item() for X,y in test_dataloader] ) # type: ignore
+                self.train()
+            if verbose :
+                print(f"start     avg test  loss : {numpy.mean(loss['start test']):>10g}") # type: ignore
         else :
             loss['test'] = None
         early_counter = 0
@@ -136,24 +143,24 @@ class LinealNN(Module):
             for batch, (X, y) in enumerate(dataloader) :
                 optimizer.zero_grad()
                 w_original = {}
-                for k,weight,w_drop in ((k,self.linear_layers[k].weight,w_drop) for k,w_drop in self.connect_dropout_layers.items()) :
-                    w_original[k] = weight.data
-                    weight.data = (1 - w_drop.p) * w_drop(weight.data)
+                for k,weight,p in ((k,self.linear_layers[k].weight,p) for k,p in self.hyperparams['connect dropout'].items()) :
+                    w_original[k] = weight
+                    weight = (1 - p) * dropout( input = weight, p = p, training = True, inplace = False ) # type: ignore
                 batch_loss = loss_fn(self(X), y.cuda())
-                for k,w_ori in w_original.items() :
-                    self.linear_layers[k].weight.data = w_ori
                 loss['train'][epoch,batch] = batch_loss.item()
+                for k,w_ori in w_original.items() :
+                    self.linear_layers[k].weight = w_ori
                 for k,l1w in self.hyperparams['l1 weight regularization'].items() :
                     for param in self.sequential_layers[k].parameters() :
                         batch_loss += param.abs().mean() * l1w
                 for k,l2w in self.hyperparams['l2 weight regularization'].items() :
                     for param in self.sequential_layers[k].parameters() :
-                        batch_loss += param.square().mean() * l2w / 2
+                        batch_loss += param.square().mean() * l2w / 2    
                 for k,l1a in self.hyperparams['l1 activation regularization'].items() :
-                    if k < self.L :
-                        batch_loss += self.act[k].abs().mean() * l1a
+                    if k < self.hyperparams['L'] :
+                        batch_loss += self.act[k].abs().mean() * l1a    
                 for k,l2a in self.hyperparams['l2 activation regularization'].items() :
-                    if k < self.L :
+                    if k < self.hyperparams['L'] :
                         batch_loss += self.act[k].square().mean() * l2a / 2
                 loss['normalized'][epoch,batch] = batch_loss.item()
                 batch_loss.backward()
@@ -199,9 +206,12 @@ class LinealNN(Module):
 
     def get_weights(self) :
         with torch.inference_mode() :
+            self.eval()
             weights = []
-            for k,linear in enumerate(self.linear_layers) :
+            for k,linear in self.linear_layers.items() :
+                w, b = torch.tensor_split( linear.weight, (linear.weight.size(dim = 1) - 1,), dim = 1 ) # type: ignore
                 if k in self.batch_norm_layers :
-                    linear = fuse_linear_bn_eval(linear,self.batch_norm_layers[k])
-                weights += [linear.weight.data.cpu().numpy()]
+                    bn = self.batch_norm_layers[k]
+                    w, b = fuse_linear_bn_weights(w, b, bn.running_mean, bn.running_var, bn.eps, bn.weight, bn.bias) # type: ignore
+                weights += [ torch.stack((w,b.unsqueeze(dim = 1)), dim = 1).cpu().numpy() ]
         return weights

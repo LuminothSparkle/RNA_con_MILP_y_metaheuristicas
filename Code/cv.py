@@ -126,7 +126,7 @@ class CrossvalidationTensorDataset(CrossvalidationDataset) :
         return pred_dict
     
     def decode(self, pred : Tensor)  -> DataFrame:
-        return DataFrame({label : self.binarizers['targets'][label].inverse_transform(data, threshold = 0).squeeze()
+        return DataFrame({label : self.binarizers['targets'][label].inverse_transform(data, threshold = 0).squeeze() # type: ignore
                                        if label in self.binarizers['targets'] else data.squeeze()
                                        for label_list, tensor_list in [ tuple( zip( *self.split_pred_tensor(pred).items() ) ) ]
                                        for label, data in zip(label_list, ( tensor.cpu().numpy() for tensor in tensor_list ))
@@ -146,29 +146,36 @@ class CrossvalidationTensorDataset(CrossvalidationDataset) :
             targets, predictions = ( self.split_pred_tensor(tensor) for tensor in (targets, predictions) )
             predictions = { label : tensor if label in self.labels['regression targets'] else sigmoid(tensor) if tensor.size(dim = 1) == 1 else softmax(tensor) for label,tensor in predictions.items() }
             targets, predictions = ({ label : tensor.squeeze().cpu().numpy() for label,tensor in tensor_dict.items() } for tensor_dict in (targets, predictions))
-            
-        metric_list = ['accuracy','recall','precision','balanced accuracy','log loss','average precision','roc auc',
-                    'matthews corrcoef','f1 score','absolute','absolute percentage','squared','r2 score','d2 absolute', 'explained variance']
-        metrics = {metric : {} for metric in metric_list}
-        metrics['dataframes'] = {'targets' : targets_dataframe, 'predictions' : predictions_dataframe}
-        metrics['targets'] = targets; metrics['predictions'] = predictions
+        metrics = {}
+        metrics['dataframes'] = { 'targets' : targets_dataframe, 'predictions' : predictions_dataframe }
+        metrics['tensors'] = { 'targets' : targets, 'predictions' : predictions }
         for label in self.labels['class targets'] :
-            metrics['accuracy'][label] = accuracy_score(targets_dataframe[label].to_numpy(),predictions_dataframe[label].to_numpy(), normalize = True)
-            metrics['recall'][label] = recall_score(targets_dataframe[label].to_numpy(), predictions_dataframe[label].to_numpy(), average = 'weighted')
-            metrics['precision'][label] = precision_score(targets_dataframe[label].to_numpy(), predictions_dataframe[label].to_numpy(), average = 'weighted')
-            metrics['balanced accuracy'][label] = balanced_accuracy_score(targets_dataframe[label].to_numpy(),predictions_dataframe[label].to_numpy())
-            metrics['log loss'][label] = log_loss(targets[label], predictions[label])
-            metrics['average precision'][label] = average_precision_score(targets[label], predictions[label])
-            metrics['roc auc'][label] = roc_auc_score(targets[label], predictions[label])
-            metrics['matthews corrcoef'][label] = matthews_corrcoef(targets_dataframe[label].to_numpy(), predictions_dataframe[label].to_numpy())
-            metrics['f1 score'][label] = f1_score(targets_dataframe[label].to_numpy(), predictions_dataframe[label].to_numpy(), average = 'weighted')
+            metrics[label] = {}
+            metrics[label]['targets'] = targets_dataframe[label].to_numpy()
+            metrics[label]['predictions'] = predictions_dataframe[label].to_numpy()
+            metrics[label]['targets tensor'] = targets[label]
+            metrics[label]['predictions tensor'] = predictions[label]
+            metrics[label]['accuracy'] = accuracy_score(targets_dataframe[label].to_numpy(),predictions_dataframe[label].to_numpy(), normalize = True)
+            metrics[label]['recall'] = recall_score(targets_dataframe[label].to_numpy(), predictions_dataframe[label].to_numpy(), average = 'weighted')
+            metrics[label]['precision'] = precision_score(targets_dataframe[label].to_numpy(), predictions_dataframe[label].to_numpy(), average = 'weighted')
+            metrics[label]['balanced accuracy'] = balanced_accuracy_score(targets_dataframe[label].to_numpy(),predictions_dataframe[label].to_numpy())
+            metrics[label]['log loss'] = log_loss(targets[label], predictions[label])
+            metrics[label]['average precision'] = average_precision_score(targets[label], predictions[label])
+            metrics[label]['roc auc'] = roc_auc_score(targets[label], predictions[label])
+            metrics[label]['matthews corrcoef'] = matthews_corrcoef(targets_dataframe[label].to_numpy(), predictions_dataframe[label].to_numpy())
+            metrics[label]['f1 score'] = f1_score(targets_dataframe[label].to_numpy(), predictions_dataframe[label].to_numpy(), average = 'weighted')
         for label in self.labels['regression targets'] :
-            metrics['absolute'][label] = mean_absolute_error(targets_dataframe[label].to_numpy(), predictions_dataframe[label].to_numpy())
-            metrics['absolute percentage'][label] = mean_absolute_percentage_error(targets_dataframe[label].to_numpy(), predictions_dataframe[label].to_numpy())
-            metrics['squared'][label] = mean_squared_error(targets_dataframe[label].to_numpy(), predictions_dataframe[label].to_numpy())
-            metrics['r2 score'][label] = r2_score(targets_dataframe[label].to_numpy(), predictions_dataframe[label].to_numpy())
-            metrics['d2 absolute'][label] = d2_absolute_error_score(targets_dataframe[label].to_numpy(), predictions_dataframe[label].to_numpy())
-            metrics['explained variance'][label] = explained_variance_score(targets_dataframe[label].to_numpy(), predictions_dataframe[label].to_numpy())
+            metrics[label] = {}
+            metrics[label]['targets'] = targets_dataframe[label].to_numpy()
+            metrics[label]['predictions'] = predictions_dataframe[label].to_numpy()
+            metrics[label]['targets tensor'] = targets[label]
+            metrics[label]['predictions tensor'] = predictions[label]
+            metrics[label]['absolute'] = mean_absolute_error(targets_dataframe[label].to_numpy(), predictions_dataframe[label].to_numpy())
+            metrics[label]['absolute percentage'] = mean_absolute_percentage_error(targets_dataframe[label].to_numpy(), predictions_dataframe[label].to_numpy())
+            metrics[label]['squared'] = mean_squared_error(targets_dataframe[label].to_numpy(), predictions_dataframe[label].to_numpy())
+            metrics[label]['r2 score'] = r2_score(targets_dataframe[label].to_numpy(), predictions_dataframe[label].to_numpy())
+            metrics[label]['d2 absolute'] = d2_absolute_error_score(targets_dataframe[label].to_numpy(), predictions_dataframe[label].to_numpy())
+            metrics[label]['explained variance'] = explained_variance_score(targets_dataframe[label].to_numpy(), predictions_dataframe[label].to_numpy())
         return metrics
     
     def loss_fn(self, pred : Tensor, target : Tensor) -> Tensor :
@@ -189,7 +196,8 @@ def crossvalidation(dataset : CrossvalidationDataset, base_optimizer : type[Opti
                     epochs : int, iterations : int, crossvalidator : BaseCrossValidator, train_batches : int = 10, 
                     opt_kwargs : dict[str,Any] = {}, base_scheduler : type[LRScheduler] | None = None, sch_kwargs : dict[str,Any] = {},
                     verbose : bool = False, early_tolerance : int | None = None, hyperparams : dict[str,Any] = {}) :
-    cv = {**{label : [] for label in ['model', 'optimizer', 'scheduler', 'train loss', 'loss', 'metrics']}, 'dataloader' : { 'test' : [] }}
+    label_list = ['metrics','loss','train time','train loss','scheduler','model','optimizer','test dataset','train dataset','test size','train size']
+    cv = {**{label : [] for label in label_list}}
     try :
         for it,(train_dataset,test_dataset) in zip(range(iterations),dataset.split(crossvalidator=crossvalidator)) :     # type: ignore
             if verbose : 
@@ -197,34 +205,46 @@ def crossvalidation(dataset : CrossvalidationDataset, base_optimizer : type[Opti
             test_size = len(test_dataset); train_size = len(train_dataset); batch_size = train_size // train_batches
             train_dataloader = DataLoader(dataset = train_dataset, shuffle = True, batch_size = batch_size, drop_last = (train_size % train_batches == 1))
             test_dataloader = DataLoader(dataset = test_dataset, batch_size = test_size)
-            cv['model'] += [ LinealNN(C = C, hyperparams = hyperparams) ] # type: ignore
-            cv['optimizer'] += [ base_optimizer(cv['model'][-1].parameters(),**opt_kwargs) ] # type: ignore
+            model = LinealNN(C = C, hyperparams = hyperparams)
+            optimizer = base_optimizer(model.parameters(),**opt_kwargs)
             if base_scheduler is not None :
-                cv['scheduler'] += [base_scheduler(cv['optimizer'][-1] ,**sch_kwargs) ] # type: ignore
-            cv['train loss'] += [ cv['model'][-1].train_loop(dataloader = train_dataloader, epochs = epochs,
-                                    test_dataloader = test_dataloader, optimizer = cv['optimizer'][-1] , loss_fn = loss_fn, 
-                                    scheduler = cv['scheduler'][-1] if base_scheduler is not None else None, verbose = verbose, early_tolerance = early_tolerance) ] # type: ignore
-            cv['loss'] += [ cv['train loss'][-1]['best'] ] # type: ignore
-            cv['model'][-1].load_state_dict(cv['train loss'][-1]['model dict']) # type: ignore
-            cv['dataloader']['test'] += [test_dataloader] # type: ignore
-            cv['metrics'] += [dataset.metrics(cv['model'][-1],test_dataloader)] # type: ignore
+                scheduler = base_scheduler(optimizer ,**sch_kwargs)
+            else :
+                scheduler = None
+            ns_i = perf_counter_ns()
+            train_loss = model.train_loop(dataloader = train_dataloader, epochs = epochs,
+                                    test_dataloader = test_dataloader, optimizer = optimizer , loss_fn = loss_fn, 
+                                    scheduler = scheduler, verbose = verbose, early_tolerance = early_tolerance)
+            ns_t = perf_counter_ns()
+            model.load_state_dict(train_loss['model dict']) # type: ignore
+            cv['test size'] += [test_size]; cv['train size'] += [train_size] # type: ignore
+            cv['optimizer'] += [optimizer]; cv['scheduler'] += [scheduler]  # type: ignore
+            cv['train loss'] += [ train_loss ] # type: ignore
+            cv['model'] += [ model ] # type: ignore
+            cv['train time'] += [ns_t - ns_i]  # type: ignore
+            cv['loss'] += [ train_loss['best'] ] # type: ignore
+            cv['test dataset'] += [test_dataset] # type: ignore
+            cv['train dataset'] += [train_dataset] # type: ignore
+            cv['metrics'] += [dataset.metrics(model,test_dataloader)] # type: ignore
     except KeyboardInterrupt as KbI :
         print(f'{KbI}')
+    sorted = numpy.argsort(array(cv['loss'])) # type: ignore
+    for label in label_list :
+        cv[label] = [ cv[label][it] for it in sorted ]
+    cv['metric list'] = {} # type: ignore
+    for label in (label for label in cv['metrics'][0] if label not in ['tensors','dataframes']) :
+        cv['metric list'][label] = { metric_label : array( [ metric_data[label][metric_label] for metric_data in cv['metrics'] ] ) for metric_label in cv['metrics'][0][label] if metric_label not in ['targets','predictions','predictions tensor','targets tensor'] } # type: ignore
+    cv['crossvalidator'] = hyperparams['crossvalidator']
+    cv['encoders'] = dataset.encoders # type: ignore
+    cv['labels'] = dataset.labels # type: ignore
+    cv['iterations'] = len(cv['loss']) # type: ignore
+    cv['total size'] = len(dataset) # type: ignore
+    cv['total time'] = numpy.sum(array(cv['train time']))
     return cv
 
-def crossvalidation_metrics(dataset : CrossvalidationDataset, hyperparams : dict[str,Any], metrics : dict[str,Any]) :
-    cv = {}
-    ns_i = perf_counter_ns()
-    cv = crossvalidation(C = hyperparams['C'], dataset = dataset,
-                                                base_optimizer = hyperparams['optimizer'], opt_kwargs = hyperparams['optimizer kwds'] if 'optimizer kwds' in hyperparams else {},
-                                                loss_fn = hyperparams['loss fn'], epochs = hyperparams['epochs'], iterations = hyperparams['iterations'],
-                                                base_scheduler = hyperparams['scheduler'] if 'scheduler' in hyperparams else None, 
-                                                sch_kwargs = hyperparams['scheduler kwds'] if 'scheduler kwds' in hyperparams else {}, verbose = True,
-                                                crossvalidator = hyperparams['crossvalidator'], train_batches = hyperparams['train batches'], 
-                                                early_tolerance = hyperparams['early tolerance'] if 'early tolerance' in hyperparams else None, hyperparams = hyperparams)
-    ns_t = perf_counter_ns()
-    t_ns = ns_t - ns_i
-    ns, mus = t_ns % 1000, t_ns // 1000
+def visualize_results(cv : dict[str,Any], metrics : dict[str,Any]) :
+    t_ns = cv['total time']
+    ns, mus = t_ns % 1000, t_ns // 1000 # type: ignore
     mus,ms = mus % 1000, mus // 1000
     ms, s = ms % 1000, ms // 1000
     s, m = s % 60, s // 60
@@ -232,56 +252,39 @@ def crossvalidation_metrics(dataset : CrossvalidationDataset, hyperparams : dict
     h, d = h % 24, h // 24
     print(f'time lapsed : {t_ns:>d} ns')
     print(f'time lapsed : {d:>d} d {h:>2d} h {m:>2d} m {s:>2d} s {ms:>3d} ms {mus:>3d} mus {ns:>3d} ns')
-    cv['total population'] = len(dataset) # type: ignore
-    cv['best it'] = numpy.argmin(cv['loss']) # type: ignore
-    cv['worst it'] = numpy.argmax(cv['loss']) # type: ignore
-    cv['mean'] = {}
-    cv['best prediction'] = {}
-    cv['best target'] = {}
-    cv['worst prediction'] = {}
-    cv['worst target'] = {}
-    cv['all percentage metrics'] = {}
-    print(f'Total de instancias : {cv["total population"]}')
-    print(f'Validacion cruzada con {repr(hyperparams["crossvalidator"])}')
-    print(f'Iteraciones totales : {len(cv["loss"])}')
-    for label in dataset.labels['class targets'] :
-        cv['mean'][label] = { metric : numpy.mean( [ metric_data[metric][label] for metric_data in cv['metrics'] ] ) for metric in metrics['class'] } # type: ignore
-        cv['all percentage metrics'][label] = array([ [ metrics[metric][label] for metrics in cv['metrics'] ] for metric in metrics['class percentages'] ]) # type: ignore
-        cv['best prediction'][label] = cv['metrics'][cv['best it']]['dataframes']['predictions'][label] # type: ignore
-        cv['best target'][label] = cv['metrics'][cv['best it']]['dataframes']['targets'][label] # type: ignore
-        cv['worst prediction'][label] = cv['metrics'][cv['worst it']]['dataframes']['predictions'][label] # type: ignore
-        cv['worst target'][label] = cv['metrics'][cv['worst it']]['dataframes']['targets'][label] # type: ignore
-        fig,ax = pyplot.subplots(); ax.boxplot(numpy.transpose(cv['all percentage metrics'][label]), tick_labels = metrics['class percentages']) # type: ignore
-        ax.set(ylabel = 'Porcentaje', title = f'Metricas {label.capitalize()}')
+    print(f'Total de instancias : {cv["total size"]}')
+    print(f'Validacion cruzada con {repr(cv["crossvalidator"])}')
+    print(f'Iteraciones totales : {cv["iterations"]}')
+    for label in cv['labels']['class targets'] :
+        mean = { metric_label : numpy.mean( cv['metric list'][label][metric_label] ) for metric_label in metrics['class'] }
+        percentage_metrics = array( [ cv['metric list'][label][metric_label] for metric_label in metrics['class percentages'] ] )
+        fig,ax = pyplot.subplots(); ax.boxplot(numpy.transpose(percentage_metrics), tick_labels = metrics['class percentages']) # type: ignore
+        ax.set(ylabel = 'Porcentaje', title = f'Métricas {label.capitalize()}')
         for metric in metrics['class'] :
             if metric in metrics['class percentages'] :
-                print(f'crossvalidation {label.capitalize():20} {metric:20} : {cv["mean"][label][metric]:>2.3%}') # type: ignore
+                print(f'crossvalidation {label.capitalize():20} {metric:20} : {mean[metric]:>2.3%}') # type: ignore
             else :
-                fig, ax = pyplot.subplots(); ax.boxplot(array([ metrics[metric][label] for metrics in cv['metrics'] ]), tick_labels = [metric]) # type: ignore
+                fig, ax = pyplot.subplots(); ax.boxplot(cv['metric list'][label][metric], tick_labels = [metric]) # type: ignore
                 ax.set(ylabel = 'Valor', title = f'Metrica {label.capitalize()}')
-                print(f'crossvalidation {label.capitalize():20} {metric:20} : {cv["mean"][label][metric]:>.7g}') # type: ignore
-        for title,target,prediction in [('peor prediccion',cv['worst target'][label],cv['worst prediction'][label]),('mejor prediccion',cv['best target'][label],cv['best prediction'][label])] :
+                print(f'crossvalidation {label.capitalize():20} {metric:20} : {mean[metric]:>.7g}') # type: ignore
+        for title,target,prediction in [('peor prediccion',cv['metrics'][-1][label]['targets'],cv['metrics'][-1][label]['predictions']),('mejor prediccion',cv['metrics'][0][label]['targets'],cv['metrics'][0][label]['predictions'])] :
             for conf_matrix_type,format,sufijo in [('all',f'>2.3%','porcentajes'),(None,f'>3d','totales'),('true',f'>2.3%','sobre verdaderos'),('pred',f'>2.3%','sobre predichos')] :
                 cm_disp = ConfusionMatrixDisplay.from_predictions(y_true = target, y_pred = prediction, # type: ignore
-                                                            labels = dataset.encoders['targets'][label].classes_, normalize = conf_matrix_type, values_format = f'{format}') # type: ignore
+                                                            labels = cv['encoders']['targets'][label].classes_, normalize = conf_matrix_type, values_format = f'{format}') # type: ignore
                 cm_disp.ax_.set(title = f'Matriz de confusion de la {title} de {label.capitalize()}, {sufijo}', xlabel = f'{label.capitalize()} predicho', ylabel = f'{label.capitalize()} real')
-    for label in dataset.labels['regression targets'] : # type: ignore
-        cv['mean'][label] = { metric : numpy.mean( [ metric_data[metric][label] for metric_data in cv['metrics'] ] ) for metric in metrics['regression'] } # type: ignore
-        cv['all percentage metrics'][label] = array([ [ metrics[metric][label] for metrics in cv['metrics'] ] for metric in metrics['regression percentages'] ]) # type: ignore
-        cv['best prediction'][label] = cv['metrics'][cv['best it']]['dataframes']['predictions'][label] # type: ignore
-        cv['best target'][label] = cv['metrics'][cv['best it']]['dataframes']['targets'][label] # type: ignore
-        cv['worst prediction'][label] = cv['metrics'][cv['worst it']]['dataframes']['predictions'][label] # type: ignore
-        cv['worst target'][label] = cv['metrics'][cv['worst it']]['dataframes']['targets'][label] # type: ignore
-        fig, ax = pyplot.subplots(); ax.boxplot(numpy.transpose(cv['all percentage metrics'][label]), tick_labels = metrics['regression percentages']) # type: ignore
-        ax.set(ylabel = 'Porcentaje', title = f'Metricas {label.capitalize()}')
+    for label in cv['labels']['regression targets'] : # type: ignore
+        mean = { metric_label : numpy.mean( cv['metric list'][label][metric_label] ) for metric_label in metrics['regression'] }
+        percentage_metrics = array( [ cv['metric list'][label][metric_label] for metric_label in metrics['regression percentages'] ] )
+        fig, ax = pyplot.subplots(); ax.boxplot(numpy.transpose(percentage_metrics), tick_labels = metrics['regression percentages']) # type: ignore
+        ax.set(ylabel = 'Porcentaje', title = f'Métricas {label.capitalize()}')
         for metric in metrics['regression'] :
             if metric in metrics['regression percentages'] :
-                print(f'crossvalidation {label.capitalize():20} {metric:20} : {cv["mean"][label][metric]:>2.3%}') # type: ignore
+                print(f'crossvalidation {label.capitalize():20} {metric:20} : {mean[metric]:>2.3%}') # type: ignore
             else :
-                fig, ax = pyplot.subplots(); ax.boxplot(array([ metrics[metric][label] for metrics in cv['metrics'] ]), tick_labels = [metric]) # type: ignore
+                fig, ax = pyplot.subplots(); ax.boxplot(cv['metric list'][label][metric], tick_labels = [metric]) # type: ignore
                 ax.set(ylabel = 'Valor', title = f'Metrica {label.capitalize()}')
-                print(f'crossvalidation {label.capitalize():20} {metric:20} : {cv["mean"][label][metric]:>.7g}') # type: ignore
-        for title,target,prediction in [('peor regresion',cv['worst target'][label],cv['worst prediction'][label]),('mejor regresion',cv['best target'][label],cv['best prediction'][label])] :
+                print(f'crossvalidation {label.capitalize():20} {metric:20} : {mean[metric]:>.7g}') # type: ignore
+        for title,target,prediction in [('peor regresion',cv['metrics'][-1][label]['targets'],cv['metrics'][-1][label]['predictions']),('mejor regresion',cv['metrics'][0][label]['targets'],cv['metrics'][0][label]['predictions'])] :
             cm_disp = PredictionErrorDisplay.from_predictions(y_true = target, y_pred = prediction, kind = 'actual_vs_predicted') # type: ignore
             cm_disp.ax_.set(title = f'Regresion de la {title} de {label.capitalize()}', xlabel = f'{label.capitalize()} predicho', ylabel = f'{label.capitalize()} real')
     pyplot.show()

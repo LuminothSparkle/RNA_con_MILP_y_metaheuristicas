@@ -2,7 +2,7 @@ import torch
 import pandas
 from pandas import DataFrame, Index, read_csv
 from pathlib import Path
-from Code.lnn import LinealNN
+from code.lnn import LinealNN
 from torch import Tensor
 from collections.abc import Sequence
 from torch.nn import Hardtanh, PReLU, Dropout
