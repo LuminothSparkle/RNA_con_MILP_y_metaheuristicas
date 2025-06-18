@@ -1,0 +1,10 @@
+Metricas para cada etiqueta,estado
+accuracy,0.925
+recall,0.925
+precision,0.9405875174256385
+f1 score,0.9267730401191658
+balanced accuracy,0.9444523470839261
+log loss,2.268027351224367
+average precision,0.9501883274960056
+roc auc,0.9781452505136716
+matthews corrcoef,0.8521686935070514

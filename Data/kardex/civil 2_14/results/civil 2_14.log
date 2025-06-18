@@ -1,0 +1,12 @@
+
+Total time lapsed   0 days 0 hours 0 minutes 26 seconds
+                    747 miliseconds 355 microseconds 200 nanoseconds
+Mean metric accuracy for estado : 0.8995996663886572
+Mean metric recall for estado : 0.8995996663886572
+Mean metric precision for estado : 0.9152752056581258
+Mean metric f1 score for estado : 0.8987578500668422
+Mean metric balanced accuracy for estado : 0.9016534391534392
+Mean metric log loss for estado : 2.313204600604743
+Mean metric average precision for estado : 0.9237422855446555
+Mean metric roc auc for estado : 0.9531371668164121
+Mean metric matthews corrcoef for estado : 0.8150459338837293

@@ -1,0 +1,11 @@
+Total time lapsed       0 days 0 hours 0 minutes 29 seconds
+                        962 miliseconds 574 microseconds 800 nanoseconds
+Mean metric accuracy for Diagnosis : 0.9710138177301662
+Mean metric recall for Diagnosis : 0.9710138177301662
+Mean metric precision for Diagnosis : 0.9717649064094752
+Mean metric f1 score for Diagnosis : 0.9710322813972845
+Mean metric balanced accuracy for Diagnosis : 0.9687859066543967
+Mean metric log loss for Diagnosis : 0.8945914614916959
+Mean metric average precision for Diagnosis : 0.9920623250001886
+Mean metric roc auc for Diagnosis : 0.9933681871591308
+Mean metric matthews corrcoef for Diagnosis : 0.9388268888002823

@@ -1,0 +1,42 @@
+{
+    "labels" : {
+        "regular features" : [
+        ],
+        "offset features" : [
+        ],
+        "sparsed features" : [
+        ],
+        "normal features" : [
+            "radius.*",
+            "texture.*",
+            "perimeter.*",
+            "area.*",
+            "smoothness.*",
+            "compactness.*",
+            "concavity.*",
+            "concave_points.*",
+            "symmetry.*",
+            "fractal_dimension*"
+        ],
+        "categorical features" : [
+        ],
+        "ordinal features" : [
+        ],
+        "regression targets" : [
+        ],
+        "class targets" : [
+            "Diagnosis"
+        ]
+    },
+    "data augment" : 10,    
+    "iterations" : 10,
+    "train batches" : 100,
+    "crossvalidator" : {
+        "name" : "RepeatedStratifiedKFold",
+        "kwds" : {
+            "n_splits" : 5,
+            "n_repeats" : 5,
+            "random_state" : 42
+        }
+    }
+}
