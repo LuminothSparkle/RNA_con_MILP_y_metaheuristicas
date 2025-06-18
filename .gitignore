@@ -1,10 +1,5 @@
 *.eps
 *.tiff
-*.pt
-*.pdf
 *.raw
 *.ps
-*.svg
 *.png
-*.pkl
-*.onnx

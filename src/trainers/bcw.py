@@ -50,6 +50,8 @@ def test_arch(dataset : BCWDataset, arch_data : dict, cv_data : dict) :
     A
     """
     torch.manual_seed(arch_data['torch seed'])
+    if torch.cuda.is_available() :
+        torch.cuda.manual_seed(arch_data['torch seed'])
     loss_fn = dataset.loss_fn
     base_crossvalidator, cv_kwargs = cv_data['crossvalidator']
     crossvalidator = base_crossvalidator(**cv_kwargs)
@@ -119,7 +121,9 @@ if __name__ == '__main__' :
             'crossvalidation' / 'cv.json'
     )
     argparser.add_argument('--no_overwrite', '-no', action = 'store_true')
+    torch.set_default_device('cpu')
     torch.set_default_dtype(torch.double)
     if torch.cuda.is_available() :
         torch.set_default_device('cuda')
+        torch.set_default_dtype(torch.double)
     sys.exit(main(argparser.parse_args(sys.argv[1:])))

@@ -81,11 +81,11 @@ class CrossvalidationTensorDataset(CrossvalidationDataset) :
     """
     tensors : dict[str,Tensor]
     dataset : TensorDataset
-    binarized : dict[str,str,ArrayLike | spmatrix]
+    binarized : dict[str,ArrayLike | spmatrix]
     encoded : dict[str,ArrayLike | spmatrix]
     labels : dict[str,Index]
     binarizers : dict[str,LabelBinarizer]
-    encoders : dict[str,LabelEncoder]
+    encoders : dict[str,LabelEncoder | OrdinalEncoder]
     std_scalers : dict[str,StandardScaler]
     std_scaled : dict[str,ArrayLike | spmatrix]
     mm_scalers : dict[str,MinMaxScaler]
@@ -96,8 +96,8 @@ class CrossvalidationTensorDataset(CrossvalidationDataset) :
     train : bool
     targets_tensor : Tensor
     features_tensor : Tensor
-    targets_size : dict[str,int]
-    features_size : dict[str,int]
+    targets_size : int
+    features_size : int
 
     def __init__(
         self, dataframe : DataFrame,
@@ -228,8 +228,8 @@ class CrossvalidationTensorDataset(CrossvalidationDataset) :
             self.class_weights[label] = (
                 1 - self.tensors[label].mean(dim = 0)
             ) * (
-                len(self.encoders[label].classes_) / (
-                    len(self.encoders[label].classes_) - 1
+                len(self.encoders[label].classes_) / ( # type: ignore
+                    len(self.encoders[label].classes_) - 1 # type: ignore
                 )
             )
             self.tensors[label] = self.tensors[label].view(
@@ -264,38 +264,47 @@ class CrossvalidationTensorDataset(CrossvalidationDataset) :
         """
         A
         """
-        self.features = torch.concat(
+        self.features = DataFrame(
+        torch.concat(
             [
                 self.tensors[label]
                 for label in self.labels['features']
             ],
             dim = 1
-        ).cpu().detach().numpy()
+        ).cpu().detach().numpy(),
+        columns = self.labels['features']
+        )
         if len(self.labels['regression targets']) > 0 :
-            self.regression_targets = torch.concat(
+            self.regression_targets = DataFrame(
+            torch.concat(
                 [
                     self.tensors[label]
                     for label in self.labels['regression targets']
                 ],
                 dim = 1
-            ).cpu().detach().numpy()
+            ).cpu().detach().numpy(),
+            columns = self.labels['regression targets']
+            )
         else :
-            self.regression_targets = torch.empty((0,))
+            self.regression_targets = DataFrame()
         if len(self.labels['class targets']) > 0 :
-            self.class_targets = torch.concat(
+            self.class_targets = DataFrame(
+            torch.concat(
                 [
                     self.tensors[label]
                     for label in self.labels['class targets']
                 ],
                 dim = 1
-            ).cpu().detach().numpy()
+            ).cpu().detach().numpy(),
+            columns = self.labels['class targets']
+            )
         else :
-            self.class_targets = torch.empty((0,))
+            self.class_targets = DataFrame()
 
     def __len__(self) -> int :
         return len(self.dataset)
 
-    def __getitem__(self, idx) -> tuple[Tensor, Tensor] :
+    def __getitem__(self, idx) :
         return self.dataset[idx]
 
     def encode(self, target : DataFrame)  -> Tensor:
@@ -304,7 +313,7 @@ class CrossvalidationTensorDataset(CrossvalidationDataset) :
         """
         return torch.column_stack([
             *[torch.tensor(
-                self.binarizers['targets'][label].transform(
+                self.binarizers[label].transform(
                     target[label].to_numpy()
                 ), dtype = torch.double)
                 for label in self.labels['class targets']
@@ -352,11 +361,11 @@ class CrossvalidationTensorDataset(CrossvalidationDataset) :
         if label in self.labels['class targets'] and label in self.binarizers :
             return self.binarizers[label].inverse_transform(
                 pred, threshold = 0
-            ).squeeze()
+            ).squeeze() # type: ignore
         if label in self.labels['ordinal features'] and label in self.encoders :
             return self.encoders[label].inverse_transform(pred).squeeze()
         if label in self.labels['class features'] and label in self.binarizers :
-            return self.binarizers[label].inverse_transform(pred).squeeze()
+            return self.binarizers[label].inverse_transform(pred).squeeze() # type: ignore
         if label in self.labels['normal features'] and label in self.std_scalers :
             return self.std_scalers[label].inverse_transform(pred).squeeze()
         if label in self.labels['offset features'] and label in self.mm_scalers :
@@ -412,13 +421,16 @@ class CrossvalidationTensorDataset(CrossvalidationDataset) :
         )
         results = {}
         for label in self.labels['regression targets'] :
-            results[label] = (targets[label].numpy(), predictions[label].numpy())
+            results[label] = (
+                targets[label].cpu().detach().numpy(),
+                predictions[label].cpu().detach().numpy()
+            )
         for label in self.labels['class targets'] :
             results[label] = (
-                targets[label].numpy(),
-                predictions[label].numpy(),
-                self.label_decode(label,targets[label].numpy()),
-                self.label_decode(label,predictions[label].numpy())
+                targets[label].cpu().detach().numpy(),
+                predictions[label].cpu().detach().numpy(),
+                self.label_decode(label,targets[label].cpu().detach().numpy()),
+                self.label_decode(label,predictions[label].cpu().detach().numpy())
             )
         return results
 
@@ -483,28 +495,34 @@ def crossvalidate(dataset : CrossvalidationDataset, optimizer : tuple[type[Optim
             test_size = len(test_dataset)
             train_size = len(train_dataset)
             batch_size = train_size // train_batches
+            if torch.cuda.is_available() :
+                generator = torch.Generator(device='cuda')
+            else :
+                generator = torch.Generator(device='cpu')
             train_dataloader = DataLoader(dataset = train_dataset, shuffle = True,
                                 batch_size = batch_size,
-                                drop_last = train_size % train_batches == 1)
+                                drop_last = train_size % train_batches == 1,
+                                generator = generator)
             test_dataloader = DataLoader(
-                dataset = test_dataset, batch_size = test_size
+                dataset = test_dataset, batch_size = test_size,
+                generator = generator
             )
             new_extra_params['test dataloader'] = test_dataloader
             model = LinealNN(C = arch, hyperparams = extra_params)
-            optimizer = base_optimizer(model.parameters(), **optimizer_kwargs)
+            ins_optimizer = base_optimizer(model.parameters(), **optimizer_kwargs)
             if 'scheduler' in extra_params :
                 base_scheduler,scheduler_kwargs = extra_params['scheduler']
-                new_extra_params['scheduler'] = base_scheduler(optimizer, **scheduler_kwargs)
+                new_extra_params['scheduler'] = base_scheduler(ins_optimizer, **scheduler_kwargs)
             ns_i = perf_counter_ns()
             train_loss = model.train_loop(dataloader = train_dataloader, epochs = epochs,
-                                    optimizer = optimizer, loss_fn = loss_fn,
+                                    optimizer = ins_optimizer, loss_fn = loss_fn,
                                     extra_params = new_extra_params)
             ns_t = perf_counter_ns()
             model.load_state_dict(train_loss['model dict'])
             results['dataset'] += [dataset]
             results['test size'] += [test_size]
             results['train size'] += [train_size]
-            results['optimizer'] += [optimizer]
+            results['optimizer'] += [ins_optimizer]
             if 'scheduler' in new_extra_params :
                 results['scheduler'] += [new_extra_params['scheduler']]
             results['train loss'] += [ train_loss ]

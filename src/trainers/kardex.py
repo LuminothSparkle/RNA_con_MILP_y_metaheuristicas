@@ -105,7 +105,9 @@ if __name__ == '__main__' :
         default = Path.cwd() / 'Data' / 'kardex' / 'crossvalidation' / 'cv.json'
     )
     argparser.add_argument('--no_overwrite', '-no', action = 'store_true')
+    torch.set_default_device('cpu')
     torch.set_default_dtype(torch.double)
     if torch.cuda.is_available() :
         torch.set_default_device('cuda')
+        torch.set_default_dtype(torch.double)
     sys.exit(main(argparser.parse_args(sys.argv[1:])))

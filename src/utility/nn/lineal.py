@@ -138,6 +138,7 @@ class LinealNN(Module):
         ) :
             if isinstance(init,tuple) :
                 init,kw = init
+                assert isinstance(weight,Tensor)
                 self.init_dict[init](weight, **kw)
             elif isinstance(init, Tensor) :
                 weight = init
@@ -183,6 +184,8 @@ class LinealNN(Module):
         """
         Implementación del entrenamiento por propagacion hacia atras de una red neuronal
         """
+        if extra_params is None :
+            extra_params = {}
         test_dataloader = (
             extra_params['test dataloader']
             if 'test dataloader' in extra_params
@@ -222,6 +225,7 @@ class LinealNN(Module):
                     for k, p in self.hyperparams['connect dropout'].items()
                 ) :
                     w_original[k] = layer.weight
+                    assert isinstance(layer.weight,Tensor)
                     layer.weight = (1 - p) * dropout(
                         input = layer.weight, p = p,
                         training = True, inplace = False )
@@ -326,4 +330,4 @@ class LinealNN(Module):
                 for module in self.sequential_layers[k].modules()
                 if not isinstance(module, BatchNorm1d)
             ))
-            self.linear_layers[k].weight = torch.tensor(weights[k])
+            self.linear_layers[k].weight = torch.tensor(weights[int(k)])

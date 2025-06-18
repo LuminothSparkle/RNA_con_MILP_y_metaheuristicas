@@ -17,6 +17,8 @@ class BCWDataset(CrossvalidationTensorDataset) :
     uci_dataset : dotdict
 
     def __init__(self, cv_data : dict | None = None, BCW_file_path : Path | None = None) -> None:
+        if cv_data is None :
+            cv_data = {'labels' : {}, 'data augment' : 0}
         if BCW_file_path is not None :
             labels = Index([
                 'ID',
@@ -30,7 +32,7 @@ class BCWDataset(CrossvalidationTensorDataset) :
                 'Diagnosis'
             ])
             dataframe = read_csv(
-                BCW_file_path, header = None, index_col = 0, names = labels
+                BCW_file_path, header = None, index_col = 0, names = labels.to_list()
             )
         else :
             self.uci_dataset = fetch_ucirepo(id = 17)
@@ -61,6 +63,8 @@ class KardexDataset(CrossvalidationTensorDataset) :
             filepath_or_buffer = Path(kardex_csv_path),
             header = 0, index_col = 0
         )
+        if cv_data is None :
+            cv_data = {'labels' : {}, 'data augment' : 0}
         labels = dataframe.columns
         labels_dict = {}
         for label_type,re_labels in cv_data['labels'].items() :

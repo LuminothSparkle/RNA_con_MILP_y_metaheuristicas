@@ -69,22 +69,22 @@ def save_module(module : LinealNN, dir_path : Path, name : str = '', exists_ok :
     """
     A
     """
-    assert exists_ok or all(
+    assert exists_ok or (
         len(sorted(dir_path.glob(f'{name}*'))) == 0
     ), 'Alguno de los archivos ya existe'
     save_object(module, dir_path / f'{name}.pkl')
     torch.save(module, dir_path / f'{name}.pt')
-    onnx_program = torch.onnx.export(
+    onnx_program  = torch.onnx.export(
         model = module,
         args = (
             torch.ones(
-                (1,module.capacity[0]),
-                dtype = torch.double
+                (1,module.capacity[0])
             ),
         ),
         dynamo = True,
         export_params = True
     )
+    assert onnx_program is not None
     onnx_program.optimize()
     onnx_program.save( destination = dir_path / f'{name}.onnx')
     traced = torch.jit.trace(module, (torch.rand(1,module.capacity[0])))
@@ -139,7 +139,7 @@ def write_mdb(file_path : Path, module : LinealNN, dataset : CrossvalidationData
     """
     with file_path.open('wb') as fo :
         pickler = Pickler(fo,5)
-        pickler.dump(tuple(module,dataset))
+        pickler.dump(tuple((module,dataset)))
 
 def read_mdb(file_path : Path) :
     """
@@ -163,8 +163,8 @@ def save_mdbs(
         safe_suffix(name,f'{i}') : (modules[i],datasets[i])
         for i in range(len(modules))
     }
-    name_dict[safe_suffix(name,'best')]  = (modules[0],  modules[0])
-    name_dict[safe_suffix(name,'worst')] = (modules[-1], modules[-1])
+    name_dict[safe_suffix(name,'best')]  = (modules[0],  datasets[0])
+    name_dict[safe_suffix(name,'worst')] = (modules[-1], datasets[-1])
     assert exists_ok or all(
         not (dir_path / f'{safe_suffix(name,"mdb")}.pkl').exists()
         for name in name_dict
@@ -181,13 +181,13 @@ def save_boxplot_figure(file_path : Path, target_label : str,
     fig, ax = pyplot.subplots()
     ax.boxplot(
         numpy.concat( [ numpy.atleast_2d(data).T for data in values.values() ], axis = 1 ),
-        tick_labels = [ label.capitalize() for label in values ]
+        tick_labels = [ label.capitalize() for label in values ] # type: ignore
     )
     ax.set(
         ylabel = 'Porcentaje' if percentage else 'Valor',
         title = f'Metricas de {target_label.capitalize()}'
     )
-    fig.savefig(file_path, transparent = True)
+    fig.savefig(file_path.as_posix(), transparent = True)
     return fig
 
 def save_confusion_matrix_figure(
@@ -201,17 +201,17 @@ def save_confusion_matrix_figure(
     cm_disp = ConfusionMatrixDisplay.from_predictions(
         y_true = targets, y_pred = predictions,
         labels = classes,
-        normalize = normalize,
+        normalize = normalize, # type: ignore
         values_format = fmt if fmt is not None else '>d' if normalize is None else '>2.3%'
     )
     cm_disp.ax_.set(
         title = f'Matriz de confusion de {target_label.capitalize()}{
-            f", normalizado sobre {normalize}" if normalize is not None else ''
+            f", normalizado sobre {normalize}" if normalize is not None else ""
         }',
         xlabel = f'{target_label.capitalize()} predicho',
         ylabel = f'{target_label.capitalize()} real'
     )
-    cm_disp.figure_.savefig(file_path, transparent = True)
+    cm_disp.figure_.savefig(file_path.as_posix(), transparent = True)
     return cm_disp
 
 def save_prediction_error_figure(
@@ -228,7 +228,7 @@ def save_prediction_error_figure(
         xlabel = f'{target_label.capitalize()} predicho',
         ylabel = f'{target_label.capitalize()} real'
     )
-    pe_disp.figure_.savefig(file_path, transparent = True)
+    pe_disp.figure_.savefig(file_path.as_posix(), transparent = True)
     return pe_disp
 
 def save_class_target_metrics(
