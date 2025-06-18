@@ -8,6 +8,8 @@ from collections.abc import Iterable, Callable, Generator
 
 from time import perf_counter_ns
 
+from torch import sigmoid
+
 import numpy
 from numpy import array, ndarray
 from numpy.typing import ArrayLike
@@ -360,17 +362,17 @@ class CrossvalidationTensorDataset(CrossvalidationDataset) :
         """
         if label in self.labels['class targets'] and label in self.binarizers :
             return self.binarizers[label].inverse_transform(
-                pred, threshold = 0
+                pred, threshold = 0.5
             ).squeeze() # type: ignore
-        if label in self.labels['ordinal features'] and label in self.encoders :
+        elif label in self.labels['ordinal features'] and label in self.encoders :
             return self.encoders[label].inverse_transform(pred).squeeze()
-        if label in self.labels['class features'] and label in self.binarizers :
+        elif label in self.labels['class features'] and label in self.binarizers :
             return self.binarizers[label].inverse_transform(pred).squeeze() # type: ignore
-        if label in self.labels['normal features'] and label in self.std_scalers :
+        elif label in self.labels['normal features'] and label in self.std_scalers :
             return self.std_scalers[label].inverse_transform(pred).squeeze()
-        if label in self.labels['offset features'] and label in self.mm_scalers :
+        elif label in self.labels['offset features'] and label in self.mm_scalers :
             return self.mm_scalers[label].inverse_transform(pred).squeeze()
-        if label in self.labels['sparsed features'] and label in self.ma_scalers :
+        elif label in self.labels['sparsed features'] and label in self.ma_scalers :
             return self.ma_scalers[label].inverse_transform(pred).squeeze()
         return pred.squeeze()
 
@@ -402,6 +404,16 @@ class CrossvalidationTensorDataset(CrossvalidationDataset) :
                         )
                     )
 
+    def calculate_probabilities(self, pred : dict[str,Tensor]) :
+        return {
+            label : (
+                tensor if label not in self.labels['class targets']
+                else tensor.sigmoid() if tensor.size(dim = 1) < 2
+                else tensor.softmax(dim = 1)
+            )
+            for label,tensor in pred.items()
+        }
+
     def prediction(self, model : Module, dataloader : DataLoader | None = None) :
         """
         A
@@ -415,9 +427,9 @@ class CrossvalidationTensorDataset(CrossvalidationDataset) :
                     (y, model(X)) for X,y in dataloader
                 ))
             )
-        targets, predictions = (
-            self.split_pred_tensor(tensor)
-            for tensor in (targets, predictions)
+        targets = self.split_pred_tensor(targets)
+        predictions = self.calculate_probabilities(
+            self.split_pred_tensor(predictions)
         )
         results = {}
         for label in self.labels['regression targets'] :

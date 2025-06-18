@@ -46,4 +46,4 @@ def get_chromosome(masks : list[Tensor]) -> Tensor :
     """
     A
     """
-    return torch.concat((tensor.flatten() for tensor in masks))
+    return torch.concat(tuple(tensor.flatten() for tensor in masks))

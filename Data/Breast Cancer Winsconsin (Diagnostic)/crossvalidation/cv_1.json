@@ -28,7 +28,7 @@
             "Diagnosis"
         ]
     },
-    "data augment" : 10,    
+    "data augment" : 0,
     "iterations" : 25,
     "train batches" : 100,
     "crossvalidator" : {

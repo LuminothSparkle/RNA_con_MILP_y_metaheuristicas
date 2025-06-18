@@ -165,9 +165,8 @@ class LinealNN(Module):
         """
         layer_input = input_tensor
         bias = torch.zeros((layer_input.size(dim = 0), self.hyperparams['L']))
-        if self.training :
-            for k, b_init in self.hyperparams['bias init'].items() :
-                bias[:,k] = b_init
+        for k, b_init in self.hyperparams['bias init'].items() :
+            bias[:,k] = b_init
         self.act = []
         for k, layer in enumerate(self.sequential_layers.values()) :
             layer_input = layer(torch.concat((layer_input,bias[:,k].unsqueeze(dim = 1)), dim = 1))
@@ -315,7 +314,7 @@ class LinealNN(Module):
                     w, b = fuse_linear_bn_weights(w, b,
                                                     bn.running_mean, bn.running_var, # type: ignore
                                                     bn.eps, bn.weight, bn.bias) # type: ignore
-                weights += [ torch.stack((w,b.unsqueeze(dim = 1)), dim = 1).cpu().detach().numpy() ]
+                weights += [ torch.concat((w,b), dim = 1).cpu().detach().numpy() ]
         return weights
 
     def set_weights(self, weights : list[ndarray]) :

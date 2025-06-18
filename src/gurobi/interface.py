@@ -26,7 +26,7 @@ def tensor_list_to_dataframe(tensor_list : list[ndarray | None]) :
     tensor_rows = []
     for tensor in tensor_list :
         if tensor is not None :
-            dim_rows += [DataFrame(data = {f'd_{dim}' : shape
+            dim_rows += [DataFrame(data = {f'd_{dim}' : [shape]
                                     for dim,shape in enumerate(tensor.shape)}, dtype = 'Int64')]
             tensor_rows += [DataFrame(data = [tensor.T.flatten()], dtype = tensor.dtype)]
         else :
@@ -37,7 +37,7 @@ def tensor_list_to_dataframe(tensor_list : list[ndarray | None]) :
     tensor_dataframe = pandas.concat(tensor_rows, axis = 'index',
                                 ignore_index = True, join = 'outer')
     return pandas.concat([dim_dataframe, tensor_dataframe], axis = 'columns',
-                        ignore_index = False, join = 'fouter')
+                        ignore_index = False, join = 'outer')
 
 def dataframe_to_tensor_list(dataframe : DataFrame) :
     """
@@ -110,7 +110,7 @@ def write_files(module : LinealNN, dataset : CrossvalidationDataset,
     }
     assert exists_ok or all(
         not file_path.exists()
-        for file_path in [mdb_path, *files_path_dict.values]
+        for file_path in [mdb_path, *files_path_dict.values()]
     ), 'Algunos de los archivos ya existe'
     write_mdb(mdb_path, module, dataset)
     layers, act_layers = module.layers, module.activation_layers
@@ -129,19 +129,19 @@ def write_files(module : LinealNN, dataset : CrossvalidationDataset,
     exponent = list(exponent)
     bits = [
         numpy.minimum(
-            numpy.floor_divide(1, m.log2()),
+            numpy.floor_divide(1, numpy.log2(numpy.abs(m))),
             numpy.full_like(m, min_bits)
         ) for m in mantissa
     ]
-    connections = [ (numpy.absolute(weight).T > zero_tolerance) for weight in weights ]
-    leaky_relu = [ act_layers[k].weight.cpu().detach().numpy()
+    connections = [ (numpy.absolute(weight).T > zero_tolerance).astype(int) for weight in weights ]
+    leaky_relu = [ act_layers[k].weight.cpu().detach().numpy() # type: ignore
         if k in act_layers and isinstance(act_layers[k], PReLU)
-        else numpy.full((module.capacity[k + 1],), act_layers[k].negative_slope)
+        else numpy.full((module.capacity[int(k) + 1],), act_layers[k].negative_slope)
         if k in act_layers and isinstance(act_layers[k], LeakyReLU)
-        else numpy.full((module.capacity[k + 1],), 0.25)
-        for k in (str(k) for k in range(layers + 1))
+        else numpy.full((module.capacity[int(k) + 1],), 0.25)
+        for k in (str(k) for k in range(layers))
     ]
-    tensor_list_to_dataframe(leaky_relu).to_csv(
+    tensor_list_to_dataframe(leaky_relu).to_csv( # type: ignore
         files_path_dict['lReLU'], header = True, index = False
     )
     tensor_list_to_dataframe(connections).to_csv(
@@ -156,7 +156,7 @@ def write_files(module : LinealNN, dataset : CrossvalidationDataset,
     arch = {}
     arch['cap'] = module.capacity
     arch['act'] = [
-        act_func[k] if k in act_func else None
+        act_func[k][0] if k in act_func else 'None'
         for k in range(layers + 1)
     ]
     arch['dp'] = [
@@ -170,7 +170,7 @@ def write_files(module : LinealNN, dataset : CrossvalidationDataset,
     arch['ht_min'] = [
         act_layers[k].min_val
         if k in act_layers and isinstance(act_layers[k], Hardtanh)
-        else None
+        else -1
         for k in (
             str(k) for k in range(layers + 1)
         )
@@ -178,24 +178,24 @@ def write_files(module : LinealNN, dataset : CrossvalidationDataset,
     arch['ht_max'] = [
         act_layers[k].max_val
         if k in act_layers and isinstance(act_layers[k], Hardtanh)
-        else None
+        else 1
         for k in (
             str(k) for k in range(layers + 1)
         )
     ]
-    l1w = module.hyperparams['l1w']
+    l1w = module.hyperparams['l1 weight regularization']
     arch['l1w'] = [
         l1w[k] if k in l1w else None
         for k in range(layers + 1)
     ]
-    l1a = module.hyperparams['l1a']
+    l1a = module.hyperparams['l1 activation regularization']
     arch['l1a'] = [
         l1a[k] if k in l1a else None
         for k in range(layers + 1)
     ]
     bias = module.hyperparams['bias init']
     arch['bias'] = [
-        bias[k] if k in bias else None
+        bias[k] if k in bias else 1
         for k in range(layers + 1)
     ]
     DataFrame(arch).to_csv(
