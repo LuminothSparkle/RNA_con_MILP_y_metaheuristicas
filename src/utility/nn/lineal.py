@@ -314,7 +314,7 @@ class LinealNN(Module):
                     w, b = fuse_linear_bn_weights(w, b,
                                                     bn.running_mean, bn.running_var, # type: ignore
                                                     bn.eps, bn.weight, bn.bias) # type: ignore
-                weights += [ torch.concat((w,b), dim = 1).cpu().detach().numpy() ]
+                weights += [ torch.concat((w,b), dim = 1).T.cpu().detach().numpy() ]
         return weights
 
     def set_weights(self, weights : list[ndarray]) :

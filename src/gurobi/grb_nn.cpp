@@ -533,17 +533,18 @@ GRBModel get_model(
    return model;
 }
 
-template<typename T1, typename T2>
-istream& operator>>(istream& stream, pair<T1,T2>& pair) {
-   stream >> pair.first >> pair.second;
-   return stream;
-}
-
-
 template<typename T>
 istream& operator>>(istream& stream, optional<T>& opt) {
    T value; stream >> value; opt = value;
    return stream;
+}
+
+template<typename T>
+ostream& operator<<(ostream& stream, const optional<T>& opt) {
+   if(opt.has_value()) {
+      return stream << *opt;
+   }
+   return stream << "";
 }
 
 template<typename T>
@@ -555,13 +556,13 @@ auto read_matrix_from_csv(istream&& input, bool ignore_header = false, bool igno
    }
    mat<T> matrix;
    while(getline(input, line)) {
-      line_stream.str(line);
+      line_stream = stringstream(line);
       vec<T> vector;
       if(ignore_index) {
          getline(line_stream, word, ',');
       }
       while(getline(line_stream, word, ',')) {
-         word_stream.str(word);
+         word_stream = stringstream(word);
          T value;
          word_stream >> value;
          vector.emplace_back(value);
@@ -594,12 +595,12 @@ auto read_list_from_csv(istream&& input, bool ignore_index = false) {
       vec<int> dim(max_dim);
       for(auto& d : dim) {
          getline(line_stream, word, ',');
-         word_stream.str(word);
+         word_stream = stringstream(word);
          word_stream >> d;
       }
       vec<T> data;
       while(getline(line_stream, word, ',') && word != "") {
-         word_stream.str(word);
+         word_stream = stringstream(word);
          T value;
          word_stream >> value;
          data.emplace_back(value);
@@ -610,7 +611,7 @@ auto read_list_from_csv(istream&& input, bool ignore_index = false) {
    return make_tuple(dim_list, data_list);
 }
 
-auto read_arch(istream&& input, bool ignore_index = true, bool ignore_header = true) {
+auto read_arch(istream&& input, bool ignore_index = false, bool ignore_header = true) {
    string line, word;
    stringstream line_stream, word_stream;
    if(ignore_header) {
@@ -622,24 +623,24 @@ auto read_arch(istream&& input, bool ignore_index = true, bool ignore_header = t
    vec<pair<double,double>> HT;
    vec<optional<double>> Drop, L1w, L1a;
    while(getline(input, line)) {
-      line_stream.str(line);
+      line_stream = stringstream(line);
       if(ignore_index) {
          getline(line_stream, word, ',');
       }
-      int k;                            
-      optional<double> l1a, l1w, drop, b;
-      optional<string> af;              
-      optional<pair<double,double>> ht;  
-      word_stream.str(word); word_stream >> k;    getline(line_stream, word, ',');
-      word_stream.str(word); word_stream >> af;   getline(line_stream, word, ',');
-      word_stream.str(word); word_stream >> ht;   getline(line_stream, word, ',');
-      word_stream.str(word); word_stream >> drop; getline(line_stream, word, ',');
-      word_stream.str(word); word_stream >> l1w;  getline(line_stream, word, ',');
-      word_stream.str(word); word_stream >> l1a;  getline(line_stream, word, ',');
-      word_stream.str(word); word_stream >> b;    getline(line_stream, word, ',');
+      int k;
+      optional<double> l1a, l1w, drop, b, ht_min, ht_max;
+      optional<string> af;
+      getline(line_stream, word, ','); word_stream = stringstream(word); word_stream >> k;
+      getline(line_stream, word, ','); word_stream = stringstream(word); word_stream >> af;
+      getline(line_stream, word, ','); word_stream = stringstream(word); word_stream >> drop;
+      getline(line_stream, word, ','); word_stream = stringstream(word); word_stream >> ht_min;
+      getline(line_stream, word, ','); word_stream = stringstream(word); word_stream >> ht_max;
+      getline(line_stream, word, ','); word_stream = stringstream(word); word_stream >> l1w;
+      getline(line_stream, word, ','); word_stream = stringstream(word); word_stream >> l1a;
+      getline(line_stream, word, ','); word_stream = stringstream(word); word_stream >> b;
       C.emplace_back(k);
       AF.emplace_back(af.value_or("None"));
-      HT.emplace_back(ht.value_or(make_pair(-1,1)));
+      HT.emplace_back(make_pair(ht_min.value_or(-1),ht_max.value_or(1)));
       Drop.emplace_back(drop);
       L1w.emplace_back(l1w);
       L1a.emplace_back(l1a);
@@ -696,12 +697,11 @@ variant< unordered_map< string, vec<string> >, string > process_opts(int argc, c
    };
    unordered_map< string, vec<string> > processed_opts;
    int argi = 1;
-   string arg, arg_name;
    while(argi < argc) {
-      if(arg = argv[argi]; !arg.starts_with("--")) {
+      if(string arg = argv[argi]; !arg.starts_with("--")) {
          return format("Error: {} no es una opcion", arg);
       }
-      else if(arg_name = arg.substr(2); !opts.contains(arg_name)) {
+      else if(string arg_name = arg.substr(2); !opts.contains(arg_name)) {
          return format("Error: No existe la opcion {}", arg_name);
       }
       else if(int max_argi = argi + opts.at(arg_name); max_argi >= argc) {
@@ -709,7 +709,7 @@ variant< unordered_map< string, vec<string> >, string > process_opts(int argc, c
       }
       else {
          processed_opts[arg_name] = vec<string>();
-         for(++argi; argi < max_argi; ++argi) {
+         for(++argi; argi <= max_argi; ++argi) {
             if(arg = argv[argi]; arg.starts_with("--")) {
                return format(
                   "Error: La opcion {} se puso antes de todos los argumentos de la opcion anterior",
@@ -726,13 +726,30 @@ variant< unordered_map< string, vec<string> >, string > process_opts(int argc, c
 }
 
 template<typename Func>
-void process_arg(
-      const unordered_map< string, vec<string> >& opts,
-      const string& arg_name, Func f, bool negate = false
-   ) {
-   if(opts.contains(arg_name) ^ negate) {
+void process_yes_arg(
+   const unordered_map< string, vec<string> >& opts,
+   const string& arg_name, Func f
+) {
+   if(opts.contains(arg_name)) {
       f(opts.at(arg_name));
    }
+}
+
+template<typename Func>
+void process_no_arg(
+   const unordered_map< string, vec<string> >& opts,
+   const string& arg_name, Func f
+) {
+   if(!opts.contains(arg_name)) {
+      f();
+   }
+}
+
+string safe_suffix(const string & a, const string& b) {
+   if(!a.ends_with("_") && b.compare("") != 0) {
+      return a + "_" + b;
+   }
+   return a + b;
 }
 
 int main(int argc, const char* argv[]) try {
@@ -746,25 +763,25 @@ int main(int argc, const char* argv[]) try {
    path load_path = opts.contains("load_path") ? opts["load_path"][0] : "";
    string save_name = opts.contains("save_name") ? opts["save_name"][0] : "model";
    string load_name = opts.contains("load_name") ? opts["load_name"][0] : "";
-   path arch_path = load_path / format("{}arch.csv",load_name);
-   path features_path = load_path / format("{}ftr.csv",load_name);
-   path class_targets_path = load_path / format("{}cls_tgt.csv",load_name);
-   path regression_targets_path = load_path / format("{}reg_tgt.csv",load_name);
+   path arch_path = load_path / format("{}.csv",safe_suffix(load_name,"arch"));
+   path features_path = load_path / format("{}.csv",safe_suffix(load_name,"ftr"));
+   path class_targets_path = load_path / format("{}.csv",safe_suffix(load_name,"cls_tgt"));
+   path regression_targets_path = load_path / format("{}.csv",safe_suffix(load_name,"reg_tgt"));
    const auto& [C, AF, hardtanh, dropout, l1w_norm, l1a_norm, bias] = read_arch(fstream(arch_path));
    const auto& features = read_matrix_from_csv<double>(fstream(features_path));
    const auto& regression_targets = read_matrix_from_csv<double>(fstream(regression_targets_path));
    const auto& class_targets = read_matrix_from_csv<double>(fstream(class_targets_path));
-   int T = features.size(), L = C.size();
+   int T = features.size(), L = C.size() - 1;
    vec<mat<int>> bits;
    if(opts.contains("use_bits")) {
-      path file_path = load_path / format("{}bits.csv",load_name);
-      const auto& [dim, data] = read_list_from_csv<int>(fstream(file_path));
+      path file_path = load_path / format("{}.csv",safe_suffix(load_name,"bits"));
+      const auto& [dim, data] = read_list_from_csv<int>(fstream(file_path.string()));
       bits = get_layers_matrix(dim,data);
    }
    else {
-      bits = vec<mat<int>>(C.size());
-      for(int k = 0; k < C.size(); ++k) {
-         bits[k] = mat<int>(C[k],vec<int>(C[k + 1]));
+      bits = vec<mat<int>>(L);
+      for(int k = 0; k < L; ++k) {
+         bits[k] = mat<int>(C[k] + 1,vec<int>(C[k + 1]));
          for(auto& row : bits[k]) {
             for(auto& value : row) {
                value = 8;
@@ -774,14 +791,14 @@ int main(int argc, const char* argv[]) try {
    }
    vec<mat<int>> precision;
    if(opts.contains("use_precision")) {
-      path file_path = load_path / format("{}precision.csv",load_name);
-      const auto& [dim, data] = read_list_from_csv<int>(fstream(file_path));
+      path file_path = load_path / format("{}.csv",safe_suffix(load_name,"precision"));
+      const auto& [dim, data] = read_list_from_csv<int>(fstream(file_path.string()));
       precision = get_layers_matrix(dim,data);
    }
    else {
-      precision = vec<mat<int>>(C.size());
-      for(int k = 0; k < C.size(); ++k) {
-         precision[k] = mat<int>(C[k],vec<int>(C[k + 1]));
+      precision = vec<mat<int>>(L);
+      for(int k = 0; k < L; ++k) {
+         precision[k] = mat<int>(C[k] + 1,vec<int>(C[k + 1]));
          for(auto& row : precision[k]) {
             for(auto& value : row) {
                value = 4;
@@ -791,14 +808,14 @@ int main(int argc, const char* argv[]) try {
    }
    vec<mat<int>> mask;
    if(opts.contains("use_mask")) {
-      path file_path = load_path / format("{}mask.csv",load_name);
+      path file_path = load_path / format("{}.csv",safe_suffix(load_name,"mask"));
       const auto& [dim, data] = read_list_from_csv<int>(fstream(file_path));
       mask = get_layers_matrix(dim,data);
    }
    else {
-      mask = vec<mat<int>>(C.size());
-      for(int k = 0; k < C.size(); ++k) {
-         mask[k] = mat<int>(C[k],vec<int>(C[k + 1]));
+      mask = vec<mat<int>>(L);
+      for(int k = 0; k < L; ++k) {
+         mask[k] = mat<int>(C[k] + 1,vec<int>(C[k + 1]));
          for(auto& row : mask[k]) {
             for(auto& value : row) {
                value = 1;
@@ -808,18 +825,20 @@ int main(int argc, const char* argv[]) try {
    }
    vec<vec<double>> leakyReLU;
    if(opts.contains("use_leakyReLU")) {
-      path file_path = load_path / format("{}LeakyReLU.csv",load_name);
+      path file_path = load_path / format("{}.csv",safe_suffix(load_name,"lReLU"));
       const auto& [dim, data] = read_list_from_csv<double>(fstream(file_path));
       leakyReLU = data;
    }
    else {
-      for(auto& row : leakyReLU) {
-         for(auto& value : row) {
+      leakyReLU = vec<vec<double>>(L);
+      for(int k = 0; k < L; ++k) {
+         leakyReLU[k] = vec<double>(C[k + 1]);
+         for(auto& value : leakyReLU[k]) {
             value = 0.25;
          }
       }
    }
-   string file_path = (save_path / save_name).string();
+   string file_path = (save_path / safe_suffix(load_name,save_name)).string();
    string ResultFile = format("{}.sol",file_path);
    string SolFiles = file_path;
    string LogFile = format("{}.log",file_path);
@@ -827,60 +846,60 @@ int main(int argc, const char* argv[]) try {
    stringstream argstream;
    int LogToConsole = !opts.contains("no_log_to_console");
    ambiente.set(GRB_IntParam_LogToConsole, LogToConsole);
-   process_arg(opts, "no_save_sols", [&SolFiles,&ambiente](const auto& args) {
+   process_no_arg(opts, "no_save_sols", [&SolFiles,&ambiente]() {
       ambiente.set(GRB_StringParam_SolFiles, SolFiles);
-   }, true);
-   process_arg(opts, "no_save_log", [&LogFile,&ambiente](const auto& args) {
+   });
+   process_no_arg(opts, "no_save_log", [&LogFile,&ambiente]() {
       ambiente.set(GRB_StringParam_LogFile, LogFile);
-   }, true);
-   process_arg(opts, "best_obj_stop", [&argstream,&ambiente](const auto& args) {
+   });
+   process_yes_arg(opts, "best_obj_stop", [&argstream,&ambiente](const auto& args) {
       double BestObjStop;
       argstream.str(args[0]);
       argstream >> BestObjStop;
       ambiente.set(GRB_DoubleParam_BestObjStop, BestObjStop);
    });
    double zero_tolerance = 0.001;
-   process_arg(opts, "zero_tolerance", [&argstream,&zero_tolerance](const auto& args) {
+   process_yes_arg(opts, "zero_tolerance", [&argstream,&zero_tolerance](const auto& args) {
       argstream.str(args[0]);
       argstream >> zero_tolerance;
    });
-   process_arg(opts, "feas_tol", [&argstream,&ambiente](const auto& args) {
+   process_yes_arg(opts, "feas_tol", [&argstream,&ambiente](const auto& args) {
       double FeasibilityTol;
       argstream.str(args[0]);
       argstream >> FeasibilityTol;
       ambiente.set(GRB_DoubleParam_FeasibilityTol, FeasibilityTol);
    });
-   process_arg(opts, "int_feas_tol", [&argstream,&ambiente](const auto& args) {
+   process_yes_arg(opts, "int_feas_tol", [&argstream,&ambiente](const auto& args) {
       double IntFeasTol;
       argstream.str(args[0]);
       argstream >> IntFeasTol;
       ambiente.set(GRB_DoubleParam_IntFeasTol, IntFeasTol);
    });
-   process_arg(opts, "iteration_limit", [&argstream,&ambiente](const auto& args) {
+   process_yes_arg(opts, "iteration_limit", [&argstream,&ambiente](const auto& args) {
       double IterationLimit;
       argstream.str(args[0]);
       argstream >> IterationLimit;
       ambiente.set(GRB_DoubleParam_IterationLimit, IterationLimit);
    });
-   process_arg(opts, "opt_tol", [&argstream,&ambiente](const auto& args) {
+   process_yes_arg(opts, "opt_tol", [&argstream,&ambiente](const auto& args) {
       double OptimalityTol;
       argstream.str(args[0]);
       argstream >> OptimalityTol;
       ambiente.set(GRB_DoubleParam_OptimalityTol, OptimalityTol);
    });
-   process_arg(opts, "solution_limit", [&argstream,&ambiente](const auto& args) {
+   process_yes_arg(opts, "solution_limit", [&argstream,&ambiente](const auto& args) {
       int SolutionLimit;
       argstream.str(args[0]);
       argstream >> SolutionLimit;
       ambiente.set(GRB_IntParam_SolutionLimit, SolutionLimit);
    });
-   process_arg(opts, "time_limit", [&argstream,&ambiente](const auto& args) {
+   process_yes_arg(opts, "time_limit", [&argstream,&ambiente](const auto& args) {
       double TimeLimit;
       argstream.str(args[0]);
       argstream >> TimeLimit;
       ambiente.set(GRB_DoubleParam_TimeLimit, TimeLimit);
    });
-   process_arg(opts, "node_limit", [&argstream,&ambiente](const auto& args) {
+   process_yes_arg(opts, "node_limit", [&argstream,&ambiente](const auto& args) {
       double NodeLimit;
       argstream.str(args[0]);
       argstream >> NodeLimit;
