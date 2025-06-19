@@ -3,3 +3,4 @@
 *.raw
 *.ps
 *.png
+/src/utility/nn/__pycache__
