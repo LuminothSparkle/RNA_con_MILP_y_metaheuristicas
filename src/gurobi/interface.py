@@ -28,7 +28,7 @@ def tensor_list_to_dataframe(tensor_list : list[ndarray | None]) :
         if tensor is not None :
             dim_rows += [DataFrame(data = {f'd_{dim}' : [shape]
                                     for dim,shape in enumerate(tensor.shape)}, dtype = 'Int64')]
-            tensor_rows += [DataFrame(data = [tensor.T.flatten()], dtype = tensor.dtype)]
+            tensor_rows += [DataFrame(data = [tensor.T.flatten()])]
         else :
             dim_rows += [DataFrame()]
             tensor_rows += [DataFrame()]
@@ -129,9 +129,9 @@ def write_files(module : LinealNN, dataset : CrossvalidationDataset,
     exponent = list(exponent)
     bits = [
         numpy.minimum(
-            numpy.floor_divide(1, numpy.log2(numpy.abs(m))),
+            numpy.abs(numpy.floor_divide(1, numpy.log2(numpy.abs(m)))),
             numpy.full_like(m, min_bits)
-        ) for m in mantissa
+        ).astype(int) for m in mantissa
     ]
     connections = [ (numpy.absolute(weight).T > zero_tolerance).astype(int) for weight in weights ]
     leaky_relu = [ act_layers[k].weight.cpu().detach().numpy() # type: ignore
@@ -144,13 +144,13 @@ def write_files(module : LinealNN, dataset : CrossvalidationDataset,
     tensor_list_to_dataframe(leaky_relu).to_csv( # type: ignore
         files_path_dict['lReLU'], header = True, index = False
     )
-    tensor_list_to_dataframe(connections).to_csv(
+    tensor_list_to_dataframe(connections).astype('Int64').to_csv(
         files_path_dict['mask'], header = True, index = False
     )
-    tensor_list_to_dataframe(bits).to_csv(
+    tensor_list_to_dataframe(bits).astype('Int64').to_csv(
         files_path_dict['bits'], header = True, index = False
     )
-    tensor_list_to_dataframe(exponent).to_csv(
+    tensor_list_to_dataframe(exponent).astype('Int64').to_csv(
         files_path_dict['exp'], header = True, index = False
     )
     arch = {}
