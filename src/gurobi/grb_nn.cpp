@@ -108,9 +108,9 @@ GRBVar gen_sum_var(
 
 template<typename T1, typename T2>
 GRBVar gen_abs_error_var(
-      GRBModel& model, const T1& y, const T2& ty,
-      const string& var_name,  const string& constr_name
-   ) {
+   GRBModel& model, const T1& y, const T2& ty,
+   const string& var_name,  const string& constr_name
+) {
    GRBVar dy = gen_diff_var(
       model, y, ty,
       format("{}_diff",var_name), 
@@ -120,9 +120,9 @@ GRBVar gen_abs_error_var(
 }
 
 GRBVar gen_act_var(
-      GRBModel& model, const GRBVar& x,
-      const string& dropout_name, const optional<double>& dropout = {}
-   ) {
+   GRBModel& model, const GRBVar& x,
+   const string& dropout_name, const optional<double>& dropout = {}
+) {
    if( dropout.transform([](double dropout) {
       std::random_device rd;
       std::mt19937 gen(rd());   
@@ -134,9 +134,9 @@ GRBVar gen_act_var(
 }
 
 GRBVar gen_bin_w_var(
-      GRBModel& model, const GRBVar& b, const GRBVar& a,const string& var_name,
-      const string& constr_name, double coef, bool mask
-   ) {
+   GRBModel& model, const GRBVar& b, const GRBVar& a,const string& var_name,
+   const string& constr_name, double coef, bool mask
+) {
    if (!mask) {
       return model.addVar(0, 0, 0, GRB_CONTINUOUS, format("{}_masked",var_name));
    }
@@ -154,9 +154,9 @@ GRBVar gen_bin_var(GRBModel& model, const string& bin_var_name, bool mask = true
 }
 
 GRBVar gen_hardtanh_var(
-      GRBModel& model, const GRBVar& z, const string& var_name,
-      const string& constr_name, const pair<double,double>& limits = {-1,1}
-   ) {
+   GRBModel& model, const GRBVar& z, const string& var_name,
+   const string& constr_name, const pair<double,double>& limits = {-1,1}
+) {
    GRBVar ht_min = model.addVar(
       -GRB_INFINITY, limits.first, 0,
       GRB_CONTINUOUS, format("{}_min", var_name)
@@ -168,9 +168,9 @@ GRBVar gen_hardtanh_var(
 }
 
 GRBVar gen_hardsigmoid_var(
-      GRBModel& model, const GRBVar& z,
-      const string& var_name, const string& constr_name
-   ) {
+   GRBModel& model, const GRBVar& z,
+   const string& var_name, const string& constr_name
+) {
    GRBVar hs_z = model.addVar(
       -GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS,
       format("{}_z", var_name)
@@ -187,9 +187,9 @@ GRBVar gen_hardsigmoid_var(
 }
 
 GRBVar gen_ReLU6_var(
-      GRBModel& model, const GRBVar& z,
-      const string& var_name, const string& constr_name
-   ) {
+   GRBModel& model, const GRBVar& z,
+   const string& var_name, const string& constr_name
+) {
    GRBVar relu6_max = model.addVar(0, GRB_INFINITY, 0, GRB_CONTINUOUS, format("{}_max", var_name));
    GRBVar relu6 = model.addVar(0, 6, 0, GRB_CONTINUOUS, var_name);
    model.addGenConstrMax(relu6_max, &z, 1, 0, format("{}_max", constr_name));
@@ -198,18 +198,18 @@ GRBVar gen_ReLU6_var(
 }
 
 GRBVar gen_ReLU_var(
-      GRBModel& model, const GRBVar& z,
-      const string& var_name, const string& constr_name
-   ) {
+   GRBModel& model, const GRBVar& z,
+   const string& var_name, const string& constr_name
+) {
    GRBVar relu = model.addVar(0, GRB_INFINITY, 0, GRB_CONTINUOUS, var_name);
    model.addGenConstrMax(relu, &z, 1, 0, constr_name);
    return relu;
 }
 
 GRBVar gen_LeakyReLU_var(
-      GRBModel& model, const GRBVar& z, const string& lrelu_var_name,
-      const string& lrelu_constr_name, double neg_coef = 0.25
-   ) {
+   GRBModel& model, const GRBVar& z, const string& lrelu_var_name,
+   const string& lrelu_constr_name, double neg_coef = 0.25
+) {
    GRBVar lrelu_max = model.addVar(
       -GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS,
       format("{}_max", lrelu_var_name)
@@ -226,9 +226,9 @@ GRBVar gen_LeakyReLU_var(
 }
 
 GRBVar gen_act_w_var(
-      GRBModel& model, const vec<GRBVar>& bw,
-      const string& act_w_var_name, const string& act_w_constr_name
-   ) {
+   GRBModel& model, const vec<GRBVar>& bw,
+   const string& act_w_var_name, const string& act_w_constr_name
+) {
    GRBVar aw = model.addVar(-GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS, act_w_var_name);
    model.addConstr(
       accumulate(bw.begin(), bw.end() - 1, GRBLinExpr(-bw.front())),
@@ -238,9 +238,9 @@ GRBVar gen_act_w_var(
 }
 
 vec<GRBVar> gen_input_vars(
-      GRBModel& model, const string& var_preffix, const vec<double> fx,
-      const optional<double>& dropout = {}
-   ) {
+   GRBModel& model, const string& var_preffix, const vec<double> fx,
+   const optional<double>& dropout = {}
+) {
    vec<GRBVar> a;
    for(const auto& [i,fx] : views::enumerate(fx)) {
       a.emplace_back(gen_act_var(
@@ -253,11 +253,11 @@ vec<GRBVar> gen_input_vars(
 }
 
 vec<GRBVar> gen_layer_vars(
-      GRBModel& model, const vec<GRBVar>& act, const ten3<GRBVar>& b,
-      const GRBVar& bias, const string& var_suffix, const string& constr_suffix, 
-      int in_C, int out_C, const mat<int>& precis, 
-      const mat<int>& mask, const optional<double>& dropout
-   ) {
+   GRBModel& model, const vec<GRBVar>& act, const ten3<GRBVar>& b,
+   const GRBVar& bias, const string& var_suffix, const string& constr_suffix, 
+   int in_C, int out_C, const mat<int>& precis, 
+   const mat<int>& mask, const optional<double>& dropout
+) {
    vec<GRBVar> a;
    for(const auto& [i, act] : views::enumerate(act)) {
       a.emplace_back(gen_act_var(
@@ -296,9 +296,9 @@ vec<GRBVar> gen_layer_vars(
 }
 
 GRBVar gen_w_var(
-      GRBModel& model, const vec<GRBVar>& b, const string& var_name,
-      const string& constr_name, int precis = 4
-   ) {
+   GRBModel& model, const vec<GRBVar>& b, const string& var_name,
+   const string& constr_name, int precis = 4
+) {
    GRBLinExpr expr = -exp2( b.size() - 1.0 - precis ) * b.front();
    for(const auto& [l,b] : views::enumerate(views::take(b, b.size() - 1))) {
       expr += exp2(l - precis) * b;
@@ -309,9 +309,9 @@ GRBVar gen_w_var(
 }
 
 GRBVar gen_l1w_var(
-      GRBModel& model, const mat<GRBVar> w,
-      const string& var_name, const string& constr_name
-   ) {
+   GRBModel& model, const mat<GRBVar> w,
+   const string& var_name, const string& constr_name
+) {
    GRBLinExpr expr;
    for(double w_i_size = w.size(); const auto& [i, w] : views::enumerate(w)) {
       for(double w_j_size = w.size(); const auto& [j, w] : views::enumerate(w)) {
@@ -327,9 +327,9 @@ GRBVar gen_l1w_var(
 }
 
 GRBVar gen_l1a_var(
-      GRBModel& model, const vec<GRBVar>& a,
-      const string& var_name, const string& constr_name
-   ) {
+   GRBModel& model, const vec<GRBVar>& a,
+   const string& var_name, const string& constr_name
+) {
    GRBLinExpr expr;
    GRBVar l1a = model.addVar(-GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS, var_name);
    for(double coef = 1.0 / a.size(); const auto& [j,a] : views::enumerate(a)) {
@@ -344,10 +344,10 @@ GRBVar gen_l1a_var(
 }
 
 GRBVar gen_class_error_var(
-      GRBModel& model, const vec<GRBVar>& y, const string& var_name,
-      const string& constr_name, const vec<double>& ty,
-      double zero_tolerance = 0.0001
-   ) {
+   GRBModel& model, const vec<GRBVar>& y, const string& var_name,
+   const string& constr_name, const vec<double>& ty,
+   double zero_tolerance = 0.0001
+) {
    vec<tuple<double,GRBVar,int>> c_order;
    for(const auto& tup : views::zip( ty, y, views::iota(0) )) {
       c_order.push_back(tup);
@@ -388,9 +388,9 @@ GRBVar gen_class_error_var(
 }
 
 GRBVar gen_regression_error_var(
-      GRBModel& model, const vec<GRBVar>& y, const string& var_name,
-      const string& constr_name, const vec<double>& ty
-   ) {
+   GRBModel& model, const vec<GRBVar>& y, const string& var_name,
+   const string& constr_name, const vec<double>& ty
+) {
    GRBLinExpr expr;
    for(const auto& [i,y,ty] : views::zip( views::iota(0), y, ty )) {
       expr += gen_abs_error_var(
@@ -460,21 +460,22 @@ vec<GRBVar> gen_activation_vars(
 }
 
 GRBModel get_model(
-      const GRBEnv& environment, int T, int L, const vec<int>& C, const vec<string>& AF, 
-      const vec<mat<int>>& mask, const vec<mat<int>>& precis, const vec<mat<int>>& D,
-      const vec<double>& bias_w, const mat<double>& leakyReLU_coef,
-      const vec<pair<double,double>>& hardtanh_limits,
-      const vec<optional<double>>& dropout,
-      const vec<optional<double>>& l1a_norm,
-      const vec<optional<double>>& l1w_norm,
-      const mat<double>& fx, const mat<double>& reg_ty, const mat<double>& class_ty,
-      double zero_tolerance = 0.0001
-   ) {
+   const GRBEnv& environment, int T, int L, const vec<int>& C, const vec<string>& AF, 
+   const vec<mat<int>>& mask, const vec<mat<int>>& precis, const vec<mat<int>>& D,
+   const vec<double>& bias_w, const mat<double>& leakyReLU_coef,
+   const vec<pair<double,double>>& hardtanh_limits,
+   const vec<optional<double>>& dropout,
+   const vec<optional<double>>& l1a_norm,
+   const vec<optional<double>>& l1w_norm,
+   const mat<double>& fx, const mat<double>& reg_ty, const mat<double>& class_ty,
+   double zero_tolerance = 0.0001
+) {
    GRBModel model(environment);
    ten4<GRBVar> b(L);
    vec<GRBVar> bias(L);
    GRBLinExpr L1_expr;
    for(int k = 0; k < L; ++k) {
+      cout << "Processing layer: " << k << "\n";
       b[k] = ten3<GRBVar>(C[k] + 1,mat<GRBVar>(C[k + 1]));
       mat<GRBVar> w(C[k] + 1,vec<GRBVar>(C[k + 1]));
       for(int i = 0; i <= C[k]; ++i) {
@@ -496,10 +497,12 @@ GRBModel get_model(
    }
    GRBLinExpr EC_expr, ER_expr;
    for(const auto& [t,fx,tc_y,treg_y] : views::zip(views::iota(0),fx,class_ty,reg_ty)) {
+      cout << "Processing case: " << t << "\n";
       vec<GRBVar> a = gen_input_vars(model, format("x_{}",t), fx, dropout.back());
       for(const auto& [k, b, AF, D, precis, bias, dropout, leakyReLU_coef, hardtanh_limits] : views::zip(
-         views::iota(0), b, AF, D,precis, bias, views::drop(dropout,1), leakyReLU_coef, hardtanh_limits
+         views::iota(0), b, AF, D, precis, bias, views::drop(dropout,1), leakyReLU_coef, hardtanh_limits
       )) {
+         cout << "Processing layer: " << k << "\n";
          const auto& z = gen_layer_vars(
             model, a, b, bias,
             format("_{}_{}",t,k), format("_L{}_C{}",k,t),
@@ -577,18 +580,18 @@ auto read_list_from_csv(istream&& input, bool ignore_index = false) {
    string line, word;
    stringstream line_stream, word_stream;
    getline(input, line);
-   line_stream.str(line);
+   line_stream = stringstream(line);
    if(ignore_index) {
-      getline(line_stream, word);
+      getline(line_stream, word, ',');
    }
    int max_dim = 0;
-   while(getline(line_stream, word) && word.starts_with("d_")) {
+   while(getline(line_stream, word, ',') && word.starts_with("d_")) {
       ++max_dim;
    }
    vec<vec<int>> dim_list;
    vec<vec<T>> data_list;
    while(getline(input, line)) {
-      line_stream.str(line);
+      line_stream = stringstream(line);
       if(ignore_index) {
          getline(line_stream, word, ',');
       }
@@ -769,39 +772,49 @@ int main(int argc, const char* argv[]) try {
    path regression_targets_path = load_path / format("{}.csv",safe_suffix(load_name,"reg_tgt"));
    const auto& [C, AF, hardtanh, dropout, l1w_norm, l1a_norm, bias] = read_arch(fstream(arch_path));
    const auto& features = read_matrix_from_csv<double>(fstream(features_path));
-   const auto& regression_targets = read_matrix_from_csv<double>(fstream(regression_targets_path));
-   const auto& class_targets = read_matrix_from_csv<double>(fstream(class_targets_path));
+   auto regression_targets = read_matrix_from_csv<double>(fstream(regression_targets_path));
+   auto class_targets = read_matrix_from_csv<double>(fstream(class_targets_path));
    int T = features.size(), L = C.size() - 1;
+   if(class_targets.empty()) {
+      class_targets = mat<double>(T);
+   }
+   if(regression_targets.empty()) {
+      regression_targets = mat<double>(T);
+   }
    vec<mat<int>> bits;
    if(opts.contains("use_bits")) {
       path file_path = load_path / format("{}.csv",safe_suffix(load_name,"bits"));
-      const auto& [dim, data] = read_list_from_csv<int>(fstream(file_path.string()));
-      bits = get_layers_matrix(dim,data);
+      const auto& [dim, data] = read_list_from_csv<int>(fstream(file_path));
+      if(dim.size() == 2) {
+         bits = get_layers_matrix(dim,data);
+      }
    }
-   else {
+   if(bits.empty()) {
       bits = vec<mat<int>>(L);
       for(int k = 0; k < L; ++k) {
          bits[k] = mat<int>(C[k] + 1,vec<int>(C[k + 1]));
          for(auto& row : bits[k]) {
             for(auto& value : row) {
-               value = 8;
+               value = 4;
             }
          }
       }
    }
    vec<mat<int>> precision;
    if(opts.contains("use_precision")) {
-      path file_path = load_path / format("{}.csv",safe_suffix(load_name,"precision"));
-      const auto& [dim, data] = read_list_from_csv<int>(fstream(file_path.string()));
-      precision = get_layers_matrix(dim,data);
+      path file_path = load_path / format("{}.csv",safe_suffix(load_name,"exp"));
+      const auto& [dim, data] = read_list_from_csv<int>(fstream(file_path));
+      if(dim.size() == 2) {
+         precision = get_layers_matrix(dim,data);
+      }
    }
-   else {
+   if(precision.empty()) {
       precision = vec<mat<int>>(L);
       for(int k = 0; k < L; ++k) {
          precision[k] = mat<int>(C[k] + 1,vec<int>(C[k + 1]));
          for(auto& row : precision[k]) {
             for(auto& value : row) {
-               value = 4;
+               value = 2;
             }
          }
       }
@@ -810,9 +823,11 @@ int main(int argc, const char* argv[]) try {
    if(opts.contains("use_mask")) {
       path file_path = load_path / format("{}.csv",safe_suffix(load_name,"mask"));
       const auto& [dim, data] = read_list_from_csv<int>(fstream(file_path));
-      mask = get_layers_matrix(dim,data);
+      if(dim.size() == 2) {
+         mask = get_layers_matrix(dim,data);
+      }
    }
-   else {
+   if(mask.empty()) {
       mask = vec<mat<int>>(L);
       for(int k = 0; k < L; ++k) {
          mask[k] = mat<int>(C[k] + 1,vec<int>(C[k + 1]));
