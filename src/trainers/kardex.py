@@ -77,16 +77,16 @@ def main(args : argparse.Namespace) :
         return None
     cv_data = read_cv_json(cv_path)
     arch_data = read_arch_json(arch_path)
-    careers_dict = {}
     for career_path in load_path.glob('*.csv') :
+        print(f'Processing {career_path.stem}')
         dataset = KardexDataset(career_path,cv_data)
         arch_data['capacity'] = [
             dataset.features_size,
             *arch_data['capacity'],
             dataset.targets_size
         ]
-        careers_dict[career_path.stem] = test_arch(dataset,arch_data,cv_data)
-    for name, data in careers_dict.items() :
+        data = test_arch(dataset,arch_data,cv_data)
+        name = career_path.stem
         results_path = save_path / name / 'results'
         results_path.mkdir(parents = True, exist_ok = True)
         save_crossvalidation(results_path,data,name,not args.no_overwrite)
