@@ -1,0 +1,115 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "args": [
+                "/Zi",
+                "/EHsc",
+                "/Fe:",
+                "${fileDirname}\\${fileBasenameNoExtension}.exe",
+                "/I",
+                "\"C:\\Program Files (x86)\\gurobi1202\\win64\\include\"",
+                "/L",
+                "\"C:\\Program Files (x86)\\gurobi1202\\win64\\lib\"",
+                "${file}"
+            ],
+            "command": "cl.exe",
+            "group": "build",
+            "label": "cl.exe build active file",
+            "problemMatcher": [
+                "$msCompile"
+            ],
+            "type": "shell",
+        },
+        {
+            "label": "Update Kardex Dataset",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/kardex/generator.py",
+                "-sp",
+                "${workspaceFolder}/Data/kardex",
+                "-lp",
+                "${workspaceFolder}/Data/kardex",
+            ],
+            "type": "shell",
+            "group": {
+                "kind": "build",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true
+            }
+        },
+        {
+            "label": "Generate BCW Gurobi Files",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/gurobi/interface.py",
+                "-sp",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results",
+                "-lp",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results",
+                "-cn",
+                "bcw_best",
+            ],
+            "type": "shell",
+            "group": {
+                "kind": "build",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true
+            }
+        },
+        {
+            "label": "Regenerate neural networks for Kardex",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/trainers/kardex.py",
+                "-sp",
+                "${workspaceFolder}/Data/kardex",
+                "-lp",
+                "${workspaceFolder}/Data/kardex",
+                "-ap",
+                "${workspaceFolder}/Data/kardex/crossvalidation/arch_1.json",
+                "-cp",
+                "${workspaceFolder}/Data/kardex/crossvalidation/cv_1.json",
+            ],
+            "type": "shell",
+            "group": {
+                "kind": "build",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true
+            }
+        },
+        {
+            "label": "Regenerate neural networks for Breast Cancer",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/trainers/bcw.py",
+                "-sp",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)",
+                "-lp",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)",
+                "-ap",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/crossvalidation/arch_1.json",
+                "-cp",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/crossvalidation/cv_1.json",
+            ],
+            "type": "shell",
+            "group": {
+                "kind": "build",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true
+            }
+        },
+    ]
+}

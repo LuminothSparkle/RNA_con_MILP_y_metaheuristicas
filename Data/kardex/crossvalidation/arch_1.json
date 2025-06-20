@@ -1,0 +1,45 @@
+{
+    "verbose" : true,
+    "capacity" : [256, 64, 64, 64, 64],
+    "torch seed" : 42,
+    "optimizer" : {
+        "name" : "Adam",
+        "kwds" : {
+            "fused" : true,
+            "lr" : 0.005
+        }
+    },
+    "scheduler" : {
+        "name"  : "CyclicLR",
+        "kwds" : {
+            "base_lr" : 0.00001,
+            "max_lr" : 0.005,
+            "step_size_up" : 1,
+            "step_size_down" : 10,
+            "mode" : "exp_range",
+            "gamma" : 0.05
+        }
+    },
+    "epochs" : 10000,
+    "early tolerance" : 300,
+    "layers params" : {
+        "activation function" : [
+            {"name" : "LeakyReLU", "kwds" : {"negative_slope" : 0.01}},
+            {"name" : "LeakyReLU", "kwds" : {"negative_slope" : 0.01}},
+            {"name" : "LeakyReLU", "kwds" : {"negative_slope" : 0.01}},
+            {"name" : "LeakyReLU", "kwds" : {"negative_slope" : 0.01}},
+            {"name" : "LeakyReLU", "kwds" : {"negative_slope" : 0.01}},
+            {"name" : "LeakyReLU", "kwds" : {"negative_slope" : 0.01}}
+        ],
+        "dropout" : {
+            "0" : 0.5
+        },
+        "bias init" : 1,
+        "weight init" : {
+            "name" : "xavier uniform",
+            "kwds" : {
+                "gain" : 1.4141428569978354
+            }
+        }
+    }
+}
