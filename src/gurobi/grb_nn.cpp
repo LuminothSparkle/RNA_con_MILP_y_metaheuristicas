@@ -42,10 +42,8 @@ using std::move;
 using std::make_tuple;
 using std::make_pair;
 using std::tuple;
-
 using std::variant;
 using std::holds_alternative;
-
 
 template<typename T>
 using vec = std::vector<T>;
@@ -58,6 +56,41 @@ using ten4 = vec<ten3<T>>;
 template<typename T>
 using ten5 = vec<ten4<T>>;
 
+bool is_single_expr(const GRBLinExpr& expr) {
+   return expr.size() == 1 && expr.getConstant() == 0.0 && expr.getCoeff(0) == 1.0;
+}
+
+GRBVar gen_var(
+   GRBModel& model, const GRBLinExpr& expr,
+   const string& var_name, const string& constr_name,
+   double min = -GRB_INFINITY, double max = GRB_INFINITY,
+   char var_type = GRB_CONTINUOUS
+) {
+   if(is_single_expr(expr)) {
+      return expr.getVar(0);
+   }
+   GRBVar var = model.addVar(min, max, 0, var_type, var_name);
+   model.addConstr(expr == var, constr_name);
+   return var;
+}
+
+vec<GRBVar> gen_vars(
+   GRBModel& model, const vec<GRBLinExpr>& exprs,
+   const string& var_name, const string& constr_name,
+   double min = -GRB_INFINITY, double max = GRB_INFINITY,
+   char var_type = GRB_CONTINUOUS
+) {
+   vec<GRBVar> vars(exprs.size());
+   for(auto&& [i,var,expr] : views::zip(views::iota(0),vars,exprs)) {
+      var = gen_var(
+         model,expr,
+         format("{}_{}",var_name,i),format("{}_{}",constr_name,i),
+         min,max,var_type
+      );
+   }
+   return vars;
+}
+
 GRBVar gen_abs_var(
    GRBModel& model, const GRBVar& x,
    const string& var_name, const string& constr_name
@@ -67,61 +100,191 @@ GRBVar gen_abs_var(
    return var_abs;
 }
 
-template<typename T1, typename T2>
-GRBVar gen_diff_var(
-   GRBModel& model, const T1& a, const T2& b,
+GRBVar gen_abs_var(
+   GRBModel& model, const GRBLinExpr& x,
    const string& var_name, const string& constr_name
 ) {
-   GRBVar var_diff = model.addVar(-GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS, var_name);
-   model.addConstr(a - b == var_diff, constr_name);
-   return var_diff;
+   return gen_abs_var(
+      model, gen_var(
+         model, x,
+         format("{}_input",var_name),
+         format("{}_input",constr_name)
+      ),
+      var_name, constr_name
+   );
+}
+
+template<typename T>
+GRBLinExpr gen_abs_expr(
+   GRBModel& model, const T& x,
+   const string& var_name, const string& constr_name
+) {
+   return gen_abs_var(model,x,var_name,constr_name);
 }
 
 GRBVar gen_max_var(
+   GRBModel& model, const vec<GRBVar>& X,
+   const string& var_name, const string& constr_name,
+   double min = 0
+) {
+   GRBVar var = model.addVar(min, GRB_INFINITY, 0, GRB_CONTINUOUS, var_name);
+   model.addGenConstrMax(var, X.data(), X.size(), min, constr_name);
+   return var;
+}
+
+GRBVar gen_max_var(
+   GRBModel& model, const GRBLinExpr& X,
+   const string& var_name, const string& constr_name,
+   double min = 0
+) {
+   vec<GRBVar> X_vec = {
+      gen_var(
+         model, X,
+         format("{}_input",var_name),
+         format("{}_input",constr_name)
+      )
+   };
+   return gen_max_var(model, X_vec, var_name, constr_name, min);
+}
+
+GRBLinExpr gen_max_expr(
    GRBModel& model, const vec<GRBVar>& X, const string& var_name,
    const string& constr_name, double min = 0
 ) {
-   GRBVar var_max = model.addVar(min, GRB_INFINITY, 0, GRB_CONTINUOUS, var_name);
-   model.addGenConstrMax(var_max, X.data(), X.size(), min, constr_name);
-   return var_max;
+   return gen_max_var(model,X,var_name,constr_name,min);
+}
+
+GRBLinExpr gen_max_expr(
+   GRBModel& model, const vec<GRBLinExpr>& X, const string& var_name,
+   const string& constr_name, double min = 0
+) {
+   return gen_max_var(
+      model,
+      gen_vars(
+         model,X,
+         format("{}_inputs",var_name),
+         format("{}_inputs",constr_name)
+      ),
+      var_name,constr_name,min
+   );
+}
+
+GRBVar gen_max_var(
+   GRBModel& model, const vec<GRBLinExpr>& X, const string& var_name,
+   const string& constr_name, double min = 0
+) {
+   return gen_max_var(
+      model,
+      gen_vars(
+         model,X,
+         format("{}_inputs",var_name),
+         format("{}_inputs",constr_name)
+      ),
+      var_name,constr_name,min
+   );
 }
 
 GRBVar gen_min_var(
+   GRBModel& model, const vec<GRBVar>& X,
+   const string& var_name, const string& constr_name,
+   double max = 0
+) {
+   GRBVar var = model.addVar(-GRB_INFINITY, max, 0, GRB_CONTINUOUS, var_name);
+   model.addGenConstrMin(var, X.data(), X.size(), max, constr_name);
+   return var;
+}
+
+GRBVar gen_min_var(
+   GRBModel& model, const GRBLinExpr& X,
+   const string& var_name, const string& constr_name,
+   double max = 0
+) {
+   vec<GRBVar> X_vec = {
+      gen_var(
+         model, X,
+         format("{}_input",var_name),
+         format("{}_input",constr_name)
+      )
+   };
+   return gen_min_var(model, X_vec, var_name, constr_name, max);
+}
+
+GRBLinExpr gen_min_expr(
    GRBModel& model, const vec<GRBVar>& X, const string& var_name,
    const string& constr_name, double max = 0
 ) {
-   GRBVar var_min = model.addVar(-GRB_INFINITY, max, 0, GRB_CONTINUOUS, var_name);
-   model.addGenConstrMin(var_min, X.data(), X.size(), max, constr_name);
-   return var_min;
+   return gen_min_var(model,X,var_name,constr_name,max);
 }
 
+GRBLinExpr gen_min_expr(
+   GRBModel& model, const vec<GRBLinExpr>& X, const string& var_name,
+   const string& constr_name, double max = 0
+) {
+   return gen_min_expr(
+      model,
+      gen_vars(
+         model,X,
+         format("{}_inputs",var_name),
+         format("{}_inputs",constr_name)
+      ),
+      var_name,constr_name,max
+   );
+}
+
+GRBVar gen_min_var(
+   GRBModel& model, const vec<GRBLinExpr>& X, const string& var_name,
+   const string& constr_name, double max = 0
+) {
+   return gen_min_var(
+      model,
+      gen_vars(
+         model,X,
+         format("{}_inputs",var_name),
+         format("{}_inputs",constr_name)
+      ),
+      var_name,constr_name,max
+   );
+}
+
+template<typename T>
+GRBLinExpr gen_sum_expr(const vec<T>& X) {
+   return accumulate(X.begin(),X.end(),GRBLinExpr());
+}
+
+template<typename T>
 GRBVar gen_sum_var(
-   GRBModel& model, const vec<GRBVar>& X,
+   GRBModel& model, const vec<T>& X,
    const string& var_name, const string& constr_name
 ) {
-   GRBVar var_sum = model.addVar(-GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS, var_name);
-   GRBLinExpr expr;
-   expr = accumulate(X.begin(),X.end(),expr);
-   model.addConstr(expr == var_sum, constr_name);
-   return var_sum;
+   return gen_var(model,gen_sum_expr(X),var_name,constr_name);
 }
 
-template<typename T1, typename T2>
-GRBVar gen_abs_error_var(
-   GRBModel& model, const T1& y, const T2& ty,
+GRBLinExpr gen_abs_error_expr(
+   GRBModel& model, const GRBLinExpr& y, const GRBLinExpr& ty,
    const string& var_name,  const string& constr_name
 ) {
-   GRBVar dy = gen_diff_var(
-      model, y, ty,
-      format("{}_diff",var_name), 
-      format("{}_diff",constr_name)
-   );
-   return gen_abs_var(model, dy, var_name, constr_name);
+   return gen_abs_expr(model, y - ty, var_name, constr_name);
 }
 
+GRBVar gen_abs_error_var(
+   GRBModel& model, const GRBLinExpr& y, const GRBLinExpr& ty,
+   const string& var_name,  const string& constr_name
+) {
+   return gen_var(
+      model,
+      gen_abs_error_expr(
+         model, y, ty, 
+         format("{}_input",var_name),
+         format("{}_input",constr_name)
+      ),
+      var_name, constr_name, 0
+   );
+}
+
+template<typename T>
 GRBVar gen_act_var(
-   GRBModel& model, const GRBVar& x,
-   const string& dropout_name, const optional<double>& dropout = {}
+   GRBModel& model, const T& x, const string& dropout_name,
+   const optional<double>& dropout = {}
 ) {
    if( dropout.transform([](double dropout) {
       std::random_device rd;
@@ -130,12 +293,36 @@ GRBVar gen_act_var(
    }).value_or(false) ) {
       return model.addVar(0, 0, 0, GRB_CONTINUOUS, dropout_name);
    }
-   return x;
+   return gen_var(
+      model,x,
+      format("{}_output",dropout_name),
+      format("{}_output",dropout_name)
+   );
+}
+
+template<typename T>
+GRBLinExpr gen_act_expr(
+   GRBModel& model, const T& x, const string& dropout_name,
+   const optional<double>& dropout = {}
+) {
+   if( dropout.transform([](double dropout) {
+      std::random_device rd;
+      std::mt19937 gen(rd());   
+      return dropout > std::uniform_real_distribution<double>(0.0,1)(gen);
+   }).value_or(false) ) {
+      return GRBLinExpr();
+   }
+   return gen_var(
+      model,x,
+      format("{}_output",dropout_name),
+      format("{}_output",dropout_name)
+   );
 }
 
 GRBVar gen_bin_w_var(
-   GRBModel& model, const GRBVar& b, const GRBVar& a,const string& var_name,
-   const string& constr_name, double coef, bool mask
+   GRBModel& model, const GRBVar& b, const GRBLinExpr& a,
+   const string& var_name, const string& constr_name,
+   double coef, bool mask
 ) {
    if (!mask) {
       return model.addVar(0, 0, 0, GRB_CONTINUOUS, format("{}_masked",var_name));
@@ -146,16 +333,57 @@ GRBVar gen_bin_w_var(
    return bw;
 }
 
-GRBVar gen_bin_var(GRBModel& model, const string& bin_var_name, bool mask = true) {
+GRBVar gen_bin_w_var(
+   GRBModel& model, const GRBLinExpr& b, const GRBLinExpr& a,
+   const string& var_name, const string& constr_name,
+   double coef, bool mask
+) {
    if (!mask) {
-      return model.addVar(0, 0, 0, GRB_BINARY, bin_var_name);
+      return model.addVar(0, 0, 0, GRB_CONTINUOUS, format("{}_masked",var_name));
    }
-   return model.addVar(0, 1, 0, GRB_BINARY, bin_var_name);
+   GRBVar b_var = gen_var(
+      model,b,
+      format("{}_input",var_name),
+      format("{}_input",constr_name),
+      0,mask,
+      GRB_BINARY
+   );
+   return gen_bin_w_var(model,b_var,a,var_name,constr_name,coef,mask);
+}
+
+GRBLinExpr gen_bin_w_expr(
+   GRBModel& model, const GRBLinExpr& b, const GRBLinExpr& a,
+   const string& var_name, const string& constr_name,
+   double coef, bool mask
+) {
+   if (!mask) {
+      return GRBLinExpr();
+   }
+   GRBVar b_var = gen_var(
+      model,b,
+      format("{}_input",var_name),
+      format("{}_input",constr_name),
+      0,mask,
+      GRB_BINARY
+   );
+   return gen_bin_w_var(model,b_var,a,var_name,constr_name,coef,mask);
+}
+
+GRBVar gen_bin_var(GRBModel& model, const string& var_name, bool mask = true) {
+   return model.addVar(0, mask, 0, GRB_BINARY, var_name);
+}
+
+GRBLinExpr gen_bin_expr(GRBModel& model, const string& var_name, bool mask = true) {
+   if (!mask) {
+      return GRBLinExpr();
+   }
+   return gen_bin_var(model,var_name,mask);
 }
 
 GRBVar gen_hardtanh_var(
-   GRBModel& model, const GRBVar& z, const string& var_name,
-   const string& constr_name, const pair<double,double>& limits = {-1,1}
+   GRBModel& model, const GRBVar& z,
+   const string& var_name, const string& constr_name,
+   const pair<double,double>& limits = {-1,1}
 ) {
    GRBVar ht_min = model.addVar(
       -GRB_INFINITY, limits.first, 0,
@@ -167,8 +395,33 @@ GRBVar gen_hardtanh_var(
    return ht;
 }
 
+GRBVar gen_hardtanh_var(
+   GRBModel& model, const GRBLinExpr& z,
+   const string& var_name, const string& constr_name,
+   const pair<double,double>& limits = {-1,1}
+) {
+   return gen_hardtanh_var(
+      model,
+      gen_var(
+         model,z,
+         format("{}_input",var_name),
+         format("{}_input",constr_name)
+      ),
+      var_name,constr_name,limits
+   );
+}
+
+template<typename T>
+GRBLinExpr gen_hardtanh_expr(
+   GRBModel& model, const T& z,
+   const string& var_name, const string& constr_name,
+   const pair<double,double>& limits = {-1,1}
+) {
+   return gen_hardtanh_var(model,z,var_name,constr_name,limits);
+}
+
 GRBVar gen_hardsigmoid_var(
-   GRBModel& model, const GRBVar& z,
+   GRBModel& model, const GRBLinExpr& z,
    const string& var_name, const string& constr_name
 ) {
    GRBVar hs_z = model.addVar(
@@ -186,6 +439,14 @@ GRBVar gen_hardsigmoid_var(
    return hs;
 }
 
+template<typename T>
+GRBLinExpr gen_hardsigmoid_expr(
+   GRBModel& model, const T& z,
+   const string& var_name, const string& constr_name
+) {
+   return gen_hardsigmoid_var(model,z,var_name,constr_name);
+}
+
 GRBVar gen_ReLU6_var(
    GRBModel& model, const GRBVar& z,
    const string& var_name, const string& constr_name
@@ -197,6 +458,29 @@ GRBVar gen_ReLU6_var(
    return relu6;
 }
 
+GRBVar gen_ReLU6_var(
+   GRBModel& model, const GRBLinExpr& z,
+   const string& var_name, const string& constr_name
+) {
+   return gen_ReLU6_var(
+      model,
+      gen_var(
+         model,z,
+         format("{}_input",var_name),
+         format("{}_input",constr_name)
+      ),
+      var_name,constr_name
+   );
+}
+
+template<typename T>
+GRBLinExpr gen_ReLU6_expr(
+   GRBModel& model, const T& z,
+   const string& var_name, const string& constr_name
+) {
+   return gen_ReLU6_var(model,z,var_name,constr_name);
+}
+
 GRBVar gen_ReLU_var(
    GRBModel& model, const GRBVar& z,
    const string& var_name, const string& constr_name
@@ -206,153 +490,282 @@ GRBVar gen_ReLU_var(
    return relu;
 }
 
-GRBVar gen_LeakyReLU_var(
-   GRBModel& model, const GRBVar& z, const string& lrelu_var_name,
-   const string& lrelu_constr_name, double neg_coef = 0.25
+GRBVar gen_ReLU_var(
+   GRBModel& model, const GRBLinExpr& z,
+   const string& var_name, const string& constr_name
+) {
+   return gen_ReLU_var(
+      model,
+      gen_var(
+         model, z,
+         format("{}_input",var_name),
+         format("{}_input",constr_name)
+      ),
+      var_name,constr_name
+   );
+}
+
+template<typename T>
+GRBLinExpr gen_ReLU_expr(
+   GRBModel& model, const T& z,
+   const string& var_name, const string& constr_name
+) {
+   return gen_ReLU_var(model,z,var_name,constr_name);
+}
+
+GRBLinExpr gen_LeakyReLU_expr(
+   GRBModel& model, const GRBVar& z,
+   const string& var_name, const string& constr_name,
+   double neg_coef = 0.25
 ) {
    GRBVar lrelu_max = model.addVar(
       -GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS,
-      format("{}_max", lrelu_var_name)
+      format("{}_max", var_name)
    );
    GRBVar lrelu_min = model.addVar(
       -GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS,
-      format("{}_min", lrelu_var_name)
+      format("{}_min", var_name)
    );
-   GRBVar lrelu = model.addVar(-GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS, lrelu_var_name);
-   model.addGenConstrMax(lrelu_max, &z, 1, 0, format("{}_max", lrelu_constr_name));
-   model.addGenConstrMin(lrelu_min, &z, 1, 0, format("{}_min", lrelu_constr_name));
-   model.addConstr(lrelu == lrelu_max + neg_coef * lrelu_min, lrelu_constr_name);
-   return lrelu;
+   model.addGenConstrMax(lrelu_max, &z, 1, 0, format("{}_max", constr_name));
+   model.addGenConstrMin(lrelu_min, &z, 1, 0, format("{}_min", constr_name));
+   return lrelu_max + neg_coef * lrelu_min;
 }
 
+GRBLinExpr gen_LeakyReLU_expr(
+   GRBModel& model, const GRBLinExpr& z,
+   const string& var_name, const string& constr_name,
+   double neg_coef = 0.25
+) {
+   return gen_LeakyReLU_expr(
+      model,
+      gen_var(
+         model,z,
+         format("{}_input",var_name),
+         format("{}_input",constr_name)
+      ),
+      var_name,constr_name,neg_coef
+   );
+}
+
+template<typename T>
+GRBVar gen_LeakyReLU_var(
+   GRBModel& model, const T& z,
+   const string& var_name, const string& constr_name,
+   double neg_coef = 0.25
+) {
+   return gen_var(
+      model,
+      gen_LeakyReLU_expr(model,z,var_name,constr_name,neg_coef),
+      format("{}_output",var_name),
+      format("{}_output",constr_name)
+   );
+}
+
+template<typename T>
+GRBLinExpr gen_act_w_expr(const vec<T>& bw) {
+   return accumulate(bw.begin(), bw.end() - 1, GRBLinExpr(-bw.front()));
+}
+
+template<typename T>
 GRBVar gen_act_w_var(
-   GRBModel& model, const vec<GRBVar>& bw,
-   const string& act_w_var_name, const string& act_w_constr_name
+   GRBModel& model, const vec<T>& bw,
+   const string& var_name, const string& constr_name
 ) {
-   GRBVar aw = model.addVar(-GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS, act_w_var_name);
-   model.addConstr(
-      accumulate(bw.begin(), bw.end() - 1, GRBLinExpr(-bw.front())),
-      GRB_EQUAL, aw, act_w_constr_name
+   return gen_var(
+      model,
+      gen_act_w_expr(bw),
+      var_name, constr_name
    );
-   return aw;
 }
 
-vec<GRBVar> gen_input_vars(
-   GRBModel& model, const string& var_preffix, const vec<double> fx,
-   const optional<double>& dropout = {}
+vec<GRBLinExpr> gen_input_exprs(
+   GRBModel& model, const string& var_name,
+   const vec<double> fx, const optional<double>& dropout = {}
 ) {
-   vec<GRBVar> a;
-   for(const auto& [i,fx] : views::enumerate(fx)) {
-      a.emplace_back(gen_act_var(
+   vec<GRBLinExpr> a;
+   for(const auto& [i,fx] : fx | views::enumerate) {
+      a.emplace_back(gen_act_expr(
          model, 
-         model.addVar(fx, fx, 0, GRB_CONTINUOUS, format("{}_{}",var_preffix,i)),
-         format("drop{}_{}",var_preffix,i), dropout
+         model.addVar(fx, fx, 0, GRB_CONTINUOUS, format("{}_{}",var_name,i)),
+         format("drop{}_{}",var_name,i),
+         dropout
       ));
    }
    return a;
 }
 
-vec<GRBVar> gen_layer_vars(
-   GRBModel& model, const vec<GRBVar>& act, const ten3<GRBVar>& b,
-   const GRBVar& bias, const string& var_suffix, const string& constr_suffix, 
+vec<GRBVar> gen_input_vars(
+   GRBModel& model, const string& var_name,
+   const vec<double> fx, const optional<double>& dropout = {}
+) {
+   return gen_vars(
+      model,
+      gen_input_exprs(model,var_name,fx,dropout),
+      format("{}_output",var_name),
+      format("{}_output",var_name)
+   );
+}
+
+template<typename T1, typename T2>
+vec<GRBLinExpr> gen_layer_exprs(
+   GRBModel& model, const vec<T1>& act, const ten3<T2>& b,
+   const GRBLinExpr& bias, const string& var_name, const string& constr_name, 
    int in_C, int out_C, const mat<int>& precis, 
    const mat<int>& mask, const optional<double>& dropout
 ) {
-   vec<GRBVar> a;
-   for(const auto& [i, act] : views::enumerate(act)) {
-      a.emplace_back(gen_act_var(
-         model, act, format("dropz{}_{}",var_suffix,i), dropout
+   vec<GRBLinExpr> a;
+   for(const auto& [i, act] : act | views::enumerate) {
+      a.emplace_back(gen_act_expr(
+         model, act,
+         format("dropz{}_{}",var_name,i),
+         dropout
       ));
    }
    a.emplace_back(bias);
-   mat<GRBVar> aw( out_C, vec<GRBVar>(in_C + 1) );
+   mat<GRBLinExpr> aw( out_C, vec<GRBLinExpr>(in_C + 1) );
    for(const auto& [i,b,a,precis,mask] : views::zip( views::iota(0), b, a, precis, mask)) {
       for(const auto& [j,b,precis,mask] : views::zip( views::iota(0), b, precis, mask )) {
-         vec<GRBVar> bw;
-         for(const auto& [l,b] : views::enumerate(b)) {
-            bw.emplace_back(gen_bin_w_var(
-               model, b, a,
-               format("bw{}_{}_{}_{}",   var_suffix,    i, j, l),
-               format("bw{}_w{},{}_D{}", constr_suffix, i, j, l),
+         vec<GRBLinExpr> bw;
+         for(const auto& [l,b] : b | views::enumerate) {
+            
+            bw.emplace_back(gen_bin_w_expr(
+               model,
+               gen_var(
+                  model,b,
+                  format("{}_input",var_name),
+                  format("{}_input",constr_name),
+                  0,mask,
+                  GRB_BINARY
+               ),
+               a,
+               format("bw{}_{}_{}_{}",   var_name,    i, j, l),
+               format("bw{}_w{},{}_D{}", constr_name, i, j, l),
                exp2(l - precis), mask
             ));
          }
-         aw[j][i] = gen_act_w_var(
-            model, bw,
-            format("aw{}_{}_{}",  var_suffix,    i, j),
-            format("aw{}_w{},{}", constr_suffix, i, j)
-         );
+         aw[j][i] = gen_act_w_expr(bw);
       }
    }
-   vec<GRBVar> z;
-   for(const auto& [j,aw] : views::enumerate(aw)) {
-      z.emplace_back(gen_sum_var(
-         model, aw,
-         format("z{}_{}",  var_suffix,    j),
-         format("z{}_N{}", constr_suffix, j)
-      ));
+   vec<GRBLinExpr> z;
+   for(const auto& [j,aw] : aw | views::enumerate) {
+      z.emplace_back(gen_sum_expr(aw));
    }
    return z;
 }
 
-GRBVar gen_w_var(
-   GRBModel& model, const vec<GRBVar>& b, const string& var_name,
-   const string& constr_name, int precis = 4
+template<typename T>
+vec<GRBVar> gen_layer_vars(
+   GRBModel& model, const vec<T>& act, const ten3<GRBVar>& b,
+   const GRBVar& bias, const string& var_name, const string& constr_name, 
+   int in_C, int out_C, const mat<int>& precis, 
+   const mat<int>& mask, const optional<double>& dropout
 ) {
-   GRBLinExpr expr = -exp2( b.size() - 1.0 - precis ) * b.front();
-   for(const auto& [l,b] : views::enumerate(views::take(b, b.size() - 1))) {
-      expr += exp2(l - precis) * b;
-   }
-   GRBVar w = model.addVar(-GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS, var_name);
-   model.addConstr(expr == w, constr_name);
-   return w;
+   return gen_vars(
+      model,
+      gen_layer_exprs(
+         model,act,b,bias,
+         var_name,constr_name,
+         in_C,out_C,
+         precis,mask,dropout
+      ),
+      format("{}_outputs",var_name),
+      format("{}_outputs",constr_name)
+   );
 }
 
-GRBVar gen_l1w_var(
-   GRBModel& model, const mat<GRBVar> w,
+template<typename T>
+GRBLinExpr gen_w_expr(
+   GRBModel& model, const vec<T>& b, int precis = 4
+) {
+   GRBLinExpr expr = -exp2( b.size() - 1.0 - precis ) * b.front();
+   for(const auto& [l,b] : b | views::take(b.size() - 1) | views::enumerate) {
+      expr += exp2(l - precis) * b;
+   }
+   return expr;
+}
+
+template<typename T>
+GRBVar gen_w_var(
+   GRBModel& model, const vec<T>& b, const string& var_name,
+   const string& constr_name, int precis = 4
+) {
+   return gen_var(
+      model,gen_w_expr(model,b,precis),
+      var_name,constr_name,precis
+   );
+}
+
+template<typename T>
+GRBLinExpr gen_l1w_expr(
+   GRBModel& model, const mat<T> w,
    const string& var_name, const string& constr_name
 ) {
    GRBLinExpr expr;
-   for(double w_i_size = w.size(); const auto& [i, w] : views::enumerate(w)) {
-      for(double w_j_size = w.size(); const auto& [j, w] : views::enumerate(w)) {
-         expr += 1.0 / (w_i_size * w_j_size) * gen_abs_var(
-            model, w, format("{}_{}_{}",var_name,i,j),
+   for(double w_i_size = w.size(); const auto& [i, w] : w | views::enumerate) {
+      for(double w_j_size = w.size(); const auto& [j, w] : w | views::enumerate) {
+         expr += 1.0 / (w_i_size * w_j_size) * gen_abs_expr(
+            model, w,
+            format("{}_{}_{}",var_name,i,j),
             format("{}_w{},{}",constr_name,i,j)
          );
       }
    }
-   GRBVar l1w = model.addVar(-GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS, var_name);
-   model.addConstr(expr == l1w, constr_name);
-   return l1w;
+   return expr;
 }
 
-GRBVar gen_l1a_var(
-   GRBModel& model, const vec<GRBVar>& a,
+template<typename T>
+GRBVar gen_l1w_var(
+   GRBModel& model, const mat<T> w,
+   const string& var_name, const string& constr_name
+) {
+   return gen_var(
+      model,gen_l1w_expr(model,w,var_name,constr_name),
+      format("{}_output",var_name),
+      format("{}_output",constr_name),
+      0
+   );
+}
+
+template<typename T>
+GRBLinExpr gen_l1a_expr(
+   GRBModel& model, const vec<T>& a,
    const string& var_name, const string& constr_name
 ) {
    GRBLinExpr expr;
-   GRBVar l1a = model.addVar(-GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS, var_name);
-   for(double coef = 1.0 / a.size(); const auto& [j,a] : views::enumerate(a)) {
-      expr += coef * gen_abs_var(
+   for(double coef = 1.0 / a.size(); const auto& [j,a] : a | views::enumerate) {
+      expr += coef * gen_abs_expr(
          model, a,
          format("{}_{}",var_name,j),
          format("{}_N{}",constr_name,j)
       );
    }
-   model.addConstr(expr == l1a, constr_name);
-   return l1a;
+   return expr;
 }
 
-GRBVar gen_class_error_var(
-   GRBModel& model, const vec<GRBVar>& y, const string& var_name,
+template<typename T>
+GRBVar gen_l1a_var(
+   GRBModel& model, const vec<T>& a,
+   const string& var_name, const string& constr_name
+) {
+   return gen_var(
+      model,gen_l1a_expr(model,a,var_name,constr_name),
+      format("{}_output",var_name),
+      format("{}_output",constr_name),
+      0
+   );
+}
+
+template<typename T>
+GRBLinExpr gen_class_error_expr(
+   GRBModel& model, const vec<T>& y, const string& var_name,
    const string& constr_name, const vec<double>& ty,
    double zero_tolerance = 0.0001
 ) {
-   vec<tuple<double,GRBVar,int>> c_order;
+   vec<tuple<double,GRBLinExpr,int>> c_order;
    for(const auto& tup : views::zip( ty, y, views::iota(0) )) {
-      c_order.push_back(tup);
+      c_order.emplace_back(tup);
    }
-   std::sort( c_order.begin(), c_order.end(), [](const auto& tuple_a, const auto& tuple_b) {
+   ranges::sort( c_order, [](const auto& tuple_a, const auto& tuple_b) {
       return get<double>(tuple_a) < get<double>(tuple_b);
    } );
    const auto& pred = [zero_tolerance](const auto& tuple) {
@@ -360,13 +773,13 @@ GRBVar gen_class_error_var(
       return ty <= zero_tolerance;
    };
    GRBLinExpr expr;
-   for(const auto& [ty,y,j] : views::take_while(c_order, pred)) {
+   for(const auto& [ty,y,j] : c_order | views::take_while(pred)) {
       expr += y;
    }
-   auto non_zero = views::drop_while(c_order, pred);
-   for(const auto& [slide,tuple] : views::enumerate(non_zero)) {
+   auto non_zero = c_order | views::drop_while(pred);
+   for(const auto& [slide,tuple] : non_zero | views::enumerate) {
       const auto& [tc_a,y_a,j_a] = tuple;
-      for(const auto&[tc_b,y_b,j_b] : views::drop(non_zero, slide + 1)) {
+      for(const auto&[tc_b,y_b,j_b] : non_zero | views::drop(slide + 1)) {
          GRBVar constrvio = model.addVar(
             -GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS,
             format("{}_{}_{}_constrvio", var_name, j_a, j_b)
@@ -375,44 +788,79 @@ GRBVar gen_class_error_var(
             y_a - y_b + constrvio == log(tc_a / tc_b),
             format("{}_Rel{},{}", constr_name, j_a, j_b)
          );
-         expr += gen_abs_var(
+         expr += gen_abs_expr(
             model, constrvio,
             format("{}_{}_{}_abs", var_name,    j_a, j_b),
             format("{}_Err{},{}",  constr_name, j_a, j_b)
          );
       }
    }
-   GRBVar EC = model.addVar(-GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS, var_name);
-   model.addConstr(expr == EC, constr_name);
-   return EC;
+   return expr;
 }
 
-GRBVar gen_regression_error_var(
-   GRBModel& model, const vec<GRBVar>& y, const string& var_name,
+template<typename T>
+GRBVar gen_class_error_var(
+   GRBModel& model, const vec<T>& y, const string& var_name,
+   const string& constr_name, const vec<double>& ty,
+   double zero_tolerance = 0.0001
+) {
+   return gen_var(
+      model,
+      gen_class_error_expr(
+         model,y,
+         var_name,constr_name,
+         ty,zero_tolerance
+      ),
+      format("{}_output",var_name),
+      format("{}_output",constr_name),
+      0
+   );
+}
+
+template<typename T>
+GRBLinExpr gen_regression_error_expr(
+   GRBModel& model, const vec<T>& y, const string& var_name,
    const string& constr_name, const vec<double>& ty
 ) {
    GRBLinExpr expr;
    for(const auto& [i,y,ty] : views::zip( views::iota(0), y, ty )) {
-      expr += gen_abs_error_var(
+      expr += gen_abs_error_expr(
          model, y, ty,
          format("{}_{}",  var_name,    i),
          format("{}_N{}", constr_name, i)
       );
    }
-   GRBVar ER = model.addVar(0, GRB_INFINITY, 0, GRB_CONTINUOUS, var_name);
-   model.addConstr(expr == ER, constr_name);
-   return ER;
+   return expr;
 }
 
-vec<GRBVar> gen_activation_vars(
-   GRBModel& model, const string& type, const vec<GRBVar>& z,
+template<typename T>
+GRBVar gen_regression_error_var(
+   GRBModel& model, const vec<T>& y, const string& var_name,
+   const string& constr_name, const vec<double>& ty
+) {
+   return gen_var(
+      model,
+      gen_regression_error_expr(
+         model,y,
+         var_name,constr_name,
+         ty
+      ),
+      format("{}_output",var_name),
+      format("{}_output",constr_name),
+      0
+   );
+}
+
+template<typename T>
+vec<GRBLinExpr> gen_activation_exprs(
+   GRBModel& model, const string& type, const vec<T>& z,
    const string& var_suffix, const string constr_suffix,
    const vec<double>& LeakyReLU_coef, const pair<double,double>& hardtanh_limits
 ) {
-   vec<GRBVar> a;
+   vec<GRBLinExpr> a;
    if(type == "ReLU") {
       for(const auto& [j,z] : views::enumerate(z)) {
-         a.emplace_back(gen_ReLU_var(
+         a.emplace_back(gen_ReLU_expr(
             model, z,
             format("relu{}_{}",  var_suffix,    j),
             format("relu{}_N{}", constr_suffix, j)
@@ -421,7 +869,7 @@ vec<GRBVar> gen_activation_vars(
    }
    else if(type == "ReLU6") {
       for(const auto& [j,z] : views::enumerate(z)) {
-         a.emplace_back(gen_ReLU6_var(
+         a.emplace_back(gen_ReLU6_expr(
             model, z,
             format("relu6{}_{}",  var_suffix,    j),
             format("relu6{}_N{}", constr_suffix, j)
@@ -430,33 +878,57 @@ vec<GRBVar> gen_activation_vars(
    }
    else if(type == "PReLU" || type == "LeakyReLU") {
       for(const auto& [j,z] : views::enumerate(z)) {
-         a.emplace_back(gen_LeakyReLU_var(
-            model, z, format("Lrelu{}_{}",var_suffix,j),
-            format("Lrelu{}_N{}",constr_suffix,j), LeakyReLU_coef[j]
+         a.emplace_back(gen_LeakyReLU_expr(
+            model, z,
+            format("Lrelu{}_{}", var_suffix,   j),
+            format("Lrelu{}_N{}",constr_suffix,j),
+            LeakyReLU_coef[j]
          ));
       }
    }
    else if(type  == "Hardtanh") {
       for(const auto& [j,z] : views::enumerate(z)) {
-         a.emplace_back(gen_hardtanh_var(
-            model, z, format("ht{}_{}",var_suffix,j),
-            format("ht{}_N{}",constr_suffix,j), hardtanh_limits
+         a.emplace_back(gen_hardtanh_expr(
+            model, z,
+            format("ht{}_{}", var_suffix,   j),
+            format("ht{}_N{}",constr_suffix,j),
+            hardtanh_limits
          ));
       }
    }
    else if(type == "Hardsigmoid") {
       for(const auto& [j,z] : views::enumerate(z)) {
-         a.emplace_back(gen_hardsigmoid_var(
+         a.emplace_back(gen_hardsigmoid_expr(
             model, z,
-            format("hs{}_{}",  var_suffix,    j),
-            format("hs{}_N{}", constr_suffix, j)
+            format("hs{}_{}", var_suffix,   j),
+            format("hs{}_N{}",constr_suffix,j)
          ));
       }
    }
    else {
-      a = z;
+      for(const auto& z : z) {
+         a.emplace_back(z);
+      }
    } 
    return a;
+}
+
+template<typename T>
+vec<GRBVar> gen_activation_vars(
+   GRBModel& model, const string& type, const vec<T>& z,
+   const string& var_name, const string constr_name,
+   const vec<double>& LeakyReLU_coef, const pair<double,double>& hardtanh_limits
+) {
+   return gen_vars(
+      model,
+      gen_activation_exprs(
+            model,type,z,
+            var_name,constr_name,
+            LeakyReLU_coef,hardtanh_limits
+      ),
+      format("{}_outputs",var_name),
+      format("{}_outputs",constr_name)
+   );
 }
 
 GRBModel get_model(
@@ -471,65 +943,68 @@ GRBModel get_model(
    double zero_tolerance = 0.0001
 ) {
    GRBModel model(environment);
-   ten4<GRBVar> b(L);
-   vec<GRBVar> bias(L);
+   ten4<GRBLinExpr> b(L);
+   vec<GRBLinExpr> bias(L);
    GRBLinExpr L1_expr;
    for(int k = 0; k < L; ++k) {
       cout << "Processing layer: " << k << "\n";
-      b[k] = ten3<GRBVar>(C[k] + 1,mat<GRBVar>(C[k + 1]));
-      mat<GRBVar> w(C[k] + 1,vec<GRBVar>(C[k + 1]));
+      b[k] = ten3<GRBLinExpr>(C[k] + 1,mat<GRBLinExpr>(C[k + 1]));
+      mat<GRBLinExpr> w(C[k] + 1,vec<GRBLinExpr>(C[k + 1]));
       for(int i = 0; i <= C[k]; ++i) {
          for(int j = 0; j < C[k + 1]; ++j) {
-            b[k][i][j] = vec<GRBVar>(D[k][i][j] + 1);
+            b[k][i][j] = vec<GRBLinExpr>(D[k][i][j] + 1);
             for(int l = 0; l <= D[k][i][j]; ++l) {
-               b[k][i][j][l] = gen_bin_var(model, format("b_{}_{}_{}_{}",k,i,j,l), mask[k][i][j]);
+               b[k][i][j][l] = gen_bin_expr(model, format("b_{}_{}_{}_{}",k,i,j,l), mask[k][i][j]);
             }
             w[i][j] = gen_w_var(
-               model, b[k][i][j], format("w_{}_{}_{}",k,i,j),
-               format("w_{}_{}_{}",k,i,j), precis[k][i][j]
+               model, b[k][i][j],
+               format("w_{}_{}_{}",k,i,j), format("w_{}_{}_{}",k,i,j),
+               precis[k][i][j]
             );
          }
       }
       if(l1w_norm[k]) {
-         L1_expr += *l1w_norm[k] * gen_l1w_var(model, w, format("l1w_{}",k), format("l1w_L{}",k));
+         L1_expr += *l1w_norm[k] * gen_l1w_expr(model, w, format("l1w_{}",k), format("l1w_L{}",k));
       }
       bias[k] = model.addVar(bias_w[k], bias_w[k], 0, GRB_CONTINUOUS, format("bias_{}",k));
    }
    GRBLinExpr EC_expr, ER_expr;
    for(const auto& [t,fx,tc_y,treg_y] : views::zip(views::iota(0),fx,class_ty,reg_ty)) {
       cout << "Processing case: " << t << "\n";
-      vec<GRBVar> a = gen_input_vars(model, format("x_{}",t), fx, dropout.back());
+      vec<GRBLinExpr> a = gen_input_exprs(model, format("x_{}",t), fx, dropout.back());
       for(const auto& [k, b, AF, D, precis, bias, dropout, leakyReLU_coef, hardtanh_limits] : views::zip(
          views::iota(0), b, AF, D, precis, bias, views::drop(dropout,1), leakyReLU_coef, hardtanh_limits
       )) {
          cout << "Processing layer: " << k << "\n";
-         const auto& z = gen_layer_vars(
+         const vec<GRBLinExpr>& z = gen_layer_exprs(
             model, a, b, bias,
             format("_{}_{}",t,k), format("_L{}_C{}",k,t),
             C[k], C[k + 1], precis,
             mask[k], dropout
          );
-         a = gen_activation_vars(
-            model, AF, z, format("_{}_{}",t,k),
-            format("_L{}_C{}",k,t), leakyReLU_coef, hardtanh_limits
+         a = gen_activation_exprs(
+            model, AF, z,
+            format("_{}_{}",t,k), format("_L{}_C{}",k,t),
+            leakyReLU_coef, hardtanh_limits
          );
          if(l1a_norm[k]) {
-            L1_expr += *l1a_norm[k] * gen_l1a_var(
-               model, a, format("l1a_{}_{}",t,k), format("l1a_L{}_C{}",k,t)
+            L1_expr += *l1a_norm[k] * gen_l1a_expr(
+               model, a,
+               format("l1a_{}_{}",t,k), format("l1a_L{}_C{}",k,t)
             );
          }
       }
-      const auto& ry_view = views::take(a, treg_y.size());
-      const auto& cy_view = views::drop(a, treg_y.size());
-      EC_expr += gen_class_error_var(
-         model, vec<GRBVar>( ry_view.begin(), ry_view.end() ),
+      const auto& ry_view = a | views::take(treg_y.size());
+      const auto& cy_view = a | views::drop(treg_y.size());
+      EC_expr += gen_class_error_expr(
+         model, vec<GRBLinExpr>( cy_view.begin(), cy_view.end() ),
          format("EC_{}",t), format("ClassE_{}",t),
-         treg_y, zero_tolerance
+         tc_y, zero_tolerance
       );
-      ER_expr += gen_regression_error_var(
-         model, vec<GRBVar>( cy_view.begin(), cy_view.end() ),
+      ER_expr += gen_regression_error_expr(
+         model, vec<GRBLinExpr>( ry_view.begin(), ry_view.end() ),
          format("ER_{}",t), format("RegE_{}",t),
-         tc_y
+         treg_y
       );
    }
    model.setObjective(EC_expr + ER_expr + L1_expr, GRB_MINIMIZE);
