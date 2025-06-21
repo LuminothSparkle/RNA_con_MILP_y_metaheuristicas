@@ -65,31 +65,6 @@ type_dict = {
     'calculate_gain' : calculate_gain
 }
 
-def save_module(module : LinealNN, dir_path : Path, name : str = '', exists_ok : bool = True) :
-    """
-    A
-    """
-    assert exists_ok or (
-        len(sorted(dir_path.glob(f'{name}*'))) == 0
-    ), 'Alguno de los archivos ya existe'
-    save_object(module, dir_path / f'{name}.pkl')
-    torch.save(module, dir_path / f'{name}.pt')
-    onnx_program  = torch.onnx.export(
-        model = module,
-        args = (
-            torch.ones(
-                (1,module.capacity[0])
-            ),
-        ),
-        dynamo = True,
-        export_params = True
-    )
-    assert onnx_program is not None
-    onnx_program.optimize()
-    onnx_program.save( destination = dir_path / f'{name}.onnx')
-    traced = torch.jit.trace(module, (torch.rand(1,module.capacity[0])))
-    torch.jit.script(traced).save(dir_path / f'{name}_script.pt')
-
 def safe_suffix(name : str, suffix : str) :
     """
     A
@@ -98,9 +73,103 @@ def safe_suffix(name : str, suffix : str) :
         return f'{name}_{suffix}'
     return f'{name}{suffix}'
 
-def save_models(models : list[LinealNN], dir_path : Path, name : str = '', exists_ok = True) :
+def save_module(module : LinealNN, dir_path : Path, name : str = '', exists_ok : bool = True) :
+    """_summary_
+
+    Args:
+        module (LinealNN): _description_
+        dir_path (Path): _description_
+        name (str, optional): _description_. Defaults to ''.
+        exists_ok (bool, optional): _description_. Defaults to True.
     """
-    A
+    save_model_python(module, dir_path / f'{name}.pkl', exists_ok)
+    save_model_torch(module, dir_path / f'{name}.pt', exists_ok)
+    save_model_onnx(module, dir_path / f'{name}.onnx', exists_ok)
+    save_model_script(module, dir_path / f'{name}_script.pt', exists_ok)
+
+def save_model_python(module : LinealNN, file_path : Path, exists_ok : bool = True) :
+    """_summary_
+
+    Args:
+        module (LinealNN): _description_
+        file_path (Path): _description_
+        exists_ok (bool, optional): _description_. Defaults to True.
+    """
+    assert exists_ok or not file_path.exists(), f'El archivo {file_path} ya existe'
+    save_object(module, file_path)
+
+def save_model_torch(module : LinealNN, file_path : Path, exists_ok : bool = True) :
+    """_summary_
+
+    Args:
+        module (LinealNN): _description_
+        file_path (Path): _description_
+        exists_ok (bool, optional): _description_. Defaults to True.
+    """
+    assert exists_ok or not file_path.exists(), f'El archivo {file_path} ya existe'
+    torch.save(module, file_path)
+
+def load_model_torch(module : LinealNN, file_path : Path) :
+    """_summary_
+
+    Args:
+        module (LinealNN): _description_
+        file_path (Path): _description_
+        exists_ok (bool, optional): _description_. Defaults to True.
+    """
+    assert file_path.exists(), f'El archivo {file_path} ya existe'
+    torch.save(module, file_path)
+
+def save_model_onnx(module : LinealNN, file_path : Path, exists_ok : bool = True) :
+    """_summary_
+
+    Args:
+        module (LinealNN): _description_
+        file_path (Path): _description_
+        exists_ok (bool, optional): _description_. Defaults to True.
+    """
+    assert exists_ok or not file_path.exists(), f'El archivo {file_path} ya existe'
+    onnx_program  = torch.onnx.export(
+        model = module,
+        args = (torch.ones((1,module.capacity[0])),),
+        dynamo = True,
+        export_params = True
+    )
+    assert onnx_program is not None
+    onnx_program.optimize()
+    onnx_program.save(file_path)
+
+def save_model_script(module : LinealNN, file_path : Path, exists_ok : bool = True) :
+    """_summary_
+
+    Args:
+        module (LinealNN): _description_
+        file_path (Path): _description_
+        exists_ok (bool, optional): _description_. Defaults to True.
+    """
+    assert exists_ok or not file_path.exists(), f'El archivo {file_path} ya existe'
+    torch.jit.script(torch.jit.trace(module, (torch.ones(1,module.capacity[0])))).save(file_path)
+
+def load_model_script(file_path : Path) :
+    """_summary_
+
+    Args:
+        file_path (Path): _description_
+
+    Returns:
+        _type_: _description_
+    """
+    assert file_path.exists(), f'El archivo {file_path} no existe'
+    return torch.jit.load(file_path)
+
+def save_models(models : list[LinealNN], dir_path : Path, name : str = '', exists_ok = True) :
+    """_summary_
+
+    Args:
+        models (list[LinealNN]): _description_
+        dir_path (Path): _description_
+        name (str, optional): _description_. Defaults to ''.
+        exists_ok (bool, optional): _description_. Defaults to True.
     """
     dir_path.mkdir(parents = True, exist_ok = True)
     name_dict = {
