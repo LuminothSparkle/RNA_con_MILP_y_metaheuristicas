@@ -35,8 +35,6 @@ def save_crossvalidation(
     """
     A
     """
-    json_path = dir_path / f'{name}.json'
-    save_cv_json(json_path, cv_data, exists_ok=exists_ok)
     pkl_path = dir_path / f'{safe_suffix(name, "cv")}.pkl'
     save_python_cv(pkl_path, cv_data, exists_ok=exists_ok)
 
@@ -88,14 +86,14 @@ def generate_cv_data(
         [*range(len(cv_data['dataset'])), 'best', 'worst'],
         [*cv_data['dataset'], cv_data['dataset'][0], cv_data['dataset'][-1]],
         [
-            *cv_data['train indexes'],
-            cv_data['train indexes'][0],
-            cv_data['train indexes'][-1]
+            *cv_data['train index'],
+            cv_data['train index'][0],
+            cv_data['train index'][-1]
         ],
         [
-            *cv_data['test indexes'],
-            cv_data['test indexes'][0],
-            cv_data['test indexes'][-1]
+            *cv_data['test index'],
+            cv_data['test index'][0],
+            cv_data['test index'][-1]
         ]
     ):
         dir_path = dataframes_path / f'model_{i}'
@@ -165,7 +163,7 @@ def generate_cv_data(
         model_data={
             'time lapsed': cv_data['train time'],
             'loss': cv_data['loss'],
-            'parameters': cv_data['model'].get_total_parameters()
+            'parameters': cv_data['parameters']
         },
         class_labels_data=class_labels_data,
         regression_labels_data=regression_labels_data,

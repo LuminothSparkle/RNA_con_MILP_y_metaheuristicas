@@ -258,8 +258,8 @@ def save_log(
     h, d = h % 24, h // 24
     with log_path.open('wt', encoding='utf-8') as fp:
         fp.write(
-            f'Total time lapsed {d} days {h} hours {m} minutes {s} seconds'
-            f'        {ms} miliseconds {mus} microseconds {ns} nanoseconds'
+            f'Total time lapsed {d} days {h} hours {m} minutes {s} seconds\n'
+            f'        {ms} miliseconds {mus} microseconds {ns} nanoseconds\n'
         )
         for labels_data in [class_labels_data, regression_labels_data]:
             for label, metrics in labels_data.items():
@@ -338,7 +338,7 @@ def save_python_cv(file_path: Path, data: dict, exists_ok: bool = True):
     assert exists_ok or not file_path.exists(), (
         f"El archivo {file_path} ya existe"
     )
-    with file_path.open(mode='wb', encoding='utf-8') as fp:
+    with file_path.open(mode='wb') as fp:
         pickle.dump(data, fp)
 
 
@@ -349,6 +349,6 @@ def load_python_cv(file_path: Path, not_exists_ok: bool = True):
     assert not_exists_ok or file_path.exists(), (
         f"El archivo {file_path} no existe"
     )
-    with file_path.open(mode='rb', encoding='utf-8') as fp:
+    with file_path.open(mode='rb') as fp:
         data = pickle.load(fp)
     return data

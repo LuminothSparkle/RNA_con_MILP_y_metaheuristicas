@@ -28,8 +28,8 @@
             "Diagnosis"
         ]
     },
-    "data augment" : 10,    
-    "iterations" : 10,
+    "data augment" : 0,    
+    "iterations" : 2,
     "train batches" : 100,
     "crossvalidator" : {
         "name" : "RepeatedStratifiedKFold",

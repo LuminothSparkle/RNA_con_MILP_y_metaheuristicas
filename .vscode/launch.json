@@ -17,6 +17,7 @@
         "pipeProgram": "<full path to pipe program such as plink.exe>",
         "pipeArgs": [],
         "pipeCwd": ""
+      },
       "MIMode": "gdb",
       "setupCommands": [
         {

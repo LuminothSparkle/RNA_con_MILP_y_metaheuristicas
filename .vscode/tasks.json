@@ -100,6 +100,7 @@
                 "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/crossvalidation/arch_1.json",
                 "-cp",
                 "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/crossvalidation/cv_1.json",
+                "-gd",
             ],
             "type": "shell",
             "group": {

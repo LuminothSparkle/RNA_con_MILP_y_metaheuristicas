@@ -9,7 +9,8 @@ import numpy
 from numpy import array, ndarray
 from pandas import DataFrame, Index
 import torch
-from torch import Tensor, Module
+from torch import Tensor
+from torch.nn import Module
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader, Dataset
 from sklearn.model_selection import BaseCrossValidator
@@ -26,7 +27,6 @@ class CrossvalidationDataset(Dataset):
     regression_targets: DataFrame
     features: DataFrame
 
-    @abstractmethod
     @classmethod
     def from_dataframes(
         cls, labels: dict[str, Index],
@@ -109,6 +109,7 @@ def crossvalidate(
         'loss', 'train time', 'train loss', 'dataset',
         'scheduler', 'model', 'optimizer', 'test index',
         'train index', 'train dataloader', 'test dataloader',
+        'parameters'
     ]
     results = {label: [] for label in label_list}
     try:
@@ -158,12 +159,13 @@ def crossvalidate(
                 results['scheduler'] += [new_extra_params['scheduler']]
             results['train loss'] += [train_loss]
             results['model'] += [model]
+            results['parameters'] += [model.get_total_parameters()]
             results['train time'] += [ns_t - ns_i]
             results['loss'] += [train_loss['best']]
             results['test dataloader'] += [test_dataloader]
             results['train dataloader'] += [train_dataloader]
-            results['train index'] += [train_dataset]
-            results['test index'] += [test_dataset]
+            results['train index'] += [list(train_dataset.indices)]
+            results['test index'] += [list(test_dataset.indices)]
     except KeyboardInterrupt as kbi:
         print(f'{kbi}')
     array_sorted = numpy.argsort(array(results['loss']))
