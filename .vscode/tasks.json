@@ -112,5 +112,27 @@
                 "focus": true
             }
         },
+        {
+            "label": "Regenerate minibatch for Breast Cancer",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/gurobi/batchgen.py",
+                "-sp",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/gurobi",
+                "-lf",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/gurobi/",
+                "-bs",
+                "10",
+            ],
+            "type": "shell",
+            "group": {
+                "kind": "build",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true
+            }
+        },
     ]
 }

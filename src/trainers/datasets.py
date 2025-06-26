@@ -5,9 +5,7 @@ Modulo que contiene las clases de los datasets utilizados
 import re
 from pathlib import Path
 from pandas import Index, read_csv
-
 from ucimlrepo import fetch_ucirepo, dotdict
-
 from src.utility.nn.cvtensords import CrossvalidationTensorDataset
 
 

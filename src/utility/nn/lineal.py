@@ -4,6 +4,7 @@ arquitectura de red neuronal en Pytorch
 """
 from typing import Any
 from collections.abc import Iterable, Callable
+import asyncio
 import numpy
 from numpy import ndarray, array
 import torch
@@ -84,12 +85,14 @@ class LinealNN(Module):
     weights_mask: dict[int, Tensor]
     bias_mask: dict[int, Tensor]
     hyperparams: dict[str, Any]
+    verbose_text: str
 
     def __init__(
         self, C: Iterable[int],
         hyperparams: dict[str, Any] | None = None
     ):
         super().__init__()
+        self.verbose = False
         if hyperparams is None:
             hyperparams = {}
         self.capacity = list(C)
@@ -193,8 +196,20 @@ class LinealNN(Module):
             self.act += [layer_input]
         return layer_input
 
-    def _print_verbose(self, epoch: int, label: str, loss: float):
-        print(f"epoch {epoch:>3d} {label:10} loss : {loss:>10g}")
+    def epoch_verbose(self, epoch: int, label: str, loss: float):
+        """
+        A
+        """
+        return f"epoch {epoch:>5d} {label:30} loss : {loss:>10g}"
+
+    async def print_verbose(self):
+        """
+        A
+        """
+        while True:
+            await asyncio.sleep(2)
+            print(self.verbose_text)
+            self.verbose_text = ''
 
     def train_loop(
         self, dataloader: DataLoader,
@@ -228,6 +243,8 @@ class LinealNN(Module):
             if 'verbose' in extra_params
             else False
         )
+        if verbose:
+            verbose_task = asyncio.create_task(self.print_verbose())
         loss = {}
         loss['train'] = ndarray((epochs, len(dataloader)), dtype=float)
         loss['normalized'] = ndarray((epochs, len(dataloader)), dtype=float)
@@ -241,10 +258,11 @@ class LinealNN(Module):
                                             for X, y in test_dataloader])
                 self.train()
             if verbose:
-                print(
-                    f'start mean test loss : '
-                    f'{numpy.mean(loss['start test']):>10g}'
-                )
+                self.verbose_text += self.epoch_verbose(
+                    0,
+                    'start mean test loss : ',
+                    numpy.mean(loss['start test']).item()
+                ) + '\n'
         else:
             loss['test'] = None
         early_counter = 0
@@ -290,10 +308,13 @@ class LinealNN(Module):
                 batch_loss.backward()
                 optimizer.step()
             if verbose:
-                self._print_verbose(epoch, 'mean train raw',
-                                    loss['train'][epoch, :].mean())
-                self._print_verbose(epoch, 'mean train norm',
-                                    loss['normalized'][epoch, :].mean())
+                self.verbose_text += self.epoch_verbose(
+                    epoch, 'mean train raw',
+                    loss['train'][epoch, :].mean()
+                ) + '\n' + self.epoch_verbose(
+                    epoch, 'mean train norm',
+                    loss['normalized'][epoch, :].mean()
+                ) + '\n'
             if scheduler is not None:
                 scheduler.step()
             if test_dataloader is not None:
@@ -308,8 +329,10 @@ class LinealNN(Module):
                     ].mean()
                     self.train()
                 if verbose:
-                    self._print_verbose(epoch, 'mean test',
-                                        loss['mean'][epoch])
+                    self.verbose_text += self.epoch_verbose(
+                        epoch, 'mean test',
+                        loss['mean'][epoch]
+                    ) + '\n'
             else:
                 loss['mean'][epoch] = loss['train'][epoch, :].mean()
             if loss['mean'][epoch] < loss['best']:
@@ -325,6 +348,8 @@ class LinealNN(Module):
                         loss['test'] = loss['test'][:(epoch+1), :]
                     break
         self.eval()
+        if verbose:
+            verbose_task.cancel()
         return loss
 
     def inference(self, dataloader: DataLoader):

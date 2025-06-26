@@ -3,6 +3,7 @@ Archivo con las funciones necesarias para interactuar
 con elentrenamiento en C++ con gurobi
 """
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 import argparse
 from argparse import ArgumentParser
 import numpy
@@ -103,13 +104,21 @@ def read_files(
     """
     gurobi_path = dir_path / 'gurobi'
     model_path = dir_path / 'model'
-    module = load_model(
-        dir_path=model_path,
-        name=read_name,
-        not_exists_ok=not_exists_ok
-    )
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        future_model = executor.submit(
+            load_model,
+            dir_path=model_path,
+            name=read_name,
+            not_exists_ok=not_exists_ok
+        )
+        future_sol = executor.submit(
+            read_sol_file,
+            gurobi_path / f'{read_name}.sol'
+        )
+        module = future_model.result()
+        weights = future_sol.result()
     if isinstance(module, LinealNN):
-        module.set_weights(read_sol_file(gurobi_path / f'{read_name}.sol'))
+        module.set_weights(weights)
     return module
 
 

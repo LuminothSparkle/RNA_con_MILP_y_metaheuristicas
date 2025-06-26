@@ -3,12 +3,13 @@ A
 """
 import argparse
 from argparse import ArgumentParser
+from threading import Thread
 from pathlib import Path
 from pandas import DataFrame
 import matplotlib.pyplot as pyplot
 import numpy
 from src.utility.io.cv import (
-    save_cv_json, save_log, save_dataset, save_boxplot_figure,
+    save_log, save_dataset, save_boxplot_figure,
     save_class_target_metrics, save_confusion_matrix_figure,
     save_prediction_error_figure, save_python_cv,
     save_regression_target_metrics,
@@ -193,14 +194,25 @@ def save_dataframes(
     """
     dir_path.mkdir(parents=True, exist_ok=True)
     model_path = dir_path / f'{safe_suffix(name, "model")}.csv'
-    save_model_dataframe(model_data, model_path, exists_ok)
+    thread_list = []
+    thread_list += [Thread(
+        target=save_model_dataframe,
+        args=(model_data, model_path, exists_ok)
+    )]
     for labels_data, labels_metrics_path in [
         (class_labels_data, dir_path / f'{safe_suffix(name, "class")}.csv',),
         (regression_labels_data, dir_path / (
             f'{safe_suffix(name, "regression")}.csv'
         ),)
     ]:
-        save_metrics_dataframe(labels_data, labels_metrics_path, exists_ok)
+        thread_list += [Thread(
+            target=save_metrics_dataframe,
+            args=(labels_data, labels_metrics_path, exists_ok)
+        )]
+    for thread in thread_list:
+        thread.start()
+    for thread in thread_list:
+        thread.join()
 
 
 def save_displays(
@@ -358,13 +370,21 @@ def save_models(
     }
     name_dict[safe_suffix(name, 'best')] = models[0]
     name_dict[safe_suffix(name, 'worst')] = models[-1]
+    thread_list = []
     for name, model in name_dict.items():
-        save_model(
-            module=model,
-            dir_path=dir_path,
-            name=name,
-            exists_ok=exists_ok
-        )
+        thread_list += [Thread(
+            target=save_model,
+            kwargs={
+                'module': model,
+                'dir_path': dir_path,
+                'name': name,
+                'exists_ok': exists_ok
+            }
+        )]
+    for thread in thread_list:
+        thread.start()
+    for thread in thread_list:
+        thread.join()
 
 
 def main(args: argparse.Namespace):

@@ -3,6 +3,7 @@ Modulo que contiene los metodos para generar la base datos del kardex
 para la red neuronal
 """
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import argparse
 from argparse import ArgumentParser
@@ -46,12 +47,29 @@ def write_db(
     Genera los archivos correspondientes para cada carrera usando el
     dataframe, además de comprobar si existe el archivo
     """
-    file_paths = [dir_path / f'{name}.csv' for name in data_frames]
-    assert exists_ok or all(
-        not file_path.exists() for file_path in file_paths
-    ), 'Alguno de los archivos ya existe'
-    for file_path, data_frame in zip(file_paths, data_frames.values()):
-        data_frame.to_csv(file_path, index_label='Alumno')
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = []
+        for name, data_frame in data_frames.items():
+            file_path = dir_path / f'{name}.csv'
+            assert exists_ok or file_path.exists(), (
+                f"El archivo {file_path} ya existe"
+            )
+            futures += [executor.submit(
+                data_frame.to_csv,
+                file_path,
+                index_label='Alumno'
+            )]
+        for future in futures:
+            future.result()
+
+
+def load_json(file_path: Path):
+    """
+    A
+    """
+    with file_path.open(mode='rt', encoding='utf-8') as fp:
+        data_dict = json.load(fp)
+    return data_dict
 
 
 def process_kardex(kardex_path: Path, plans_paths: list[Path]):
@@ -60,13 +78,14 @@ def process_kardex(kardex_path: Path, plans_paths: list[Path]):
     la información para generar la base de datos del kardex para
     la red neuronal
     """
-    career_data = {}
-    for plan_path in plans_paths:
-        code = plan_path.stem
-        with plan_path.open(mode='rt', encoding='utf-8') as fp:
-            career_data[code] = json.load(fp)
-    with kardex_path.open(mode='rt', encoding='utf-8') as fp:
-        kardex_dict = json.load(fp)
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures_map = executor.map(load_json, plans_paths)
+        kardex_future = executor.submit(load_json, kardex_path)
+        career_data = {}
+        for plan_path, result in zip(plans_paths, futures_map):
+            code = plan_path.stem
+            career_data[code] = result
+        kardex_dict = kardex_future.result()
     career_dict = {}
     for name, students in kardex_dict.items():
         career_data = {}

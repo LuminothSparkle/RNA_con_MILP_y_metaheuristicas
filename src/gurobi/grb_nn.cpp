@@ -92,9 +92,27 @@ vec<GRBVar> gen_vars(
 }
 
 GRBVar gen_abs_var(
+   GRBModel& model, const GRBLinExpr& x,
+   const string& var_name, const string& constr_name,
+   bool use_max, bool objective
+);
+
+GRBVar gen_abs_var(
    GRBModel& model, const GRBVar& x,
-   const string& var_name, const string& constr_name
+   const string& var_name, const string& constr_name,
+   bool use_max = false, bool objective = false
 ) {
+   if(objective || use_max) {
+      return gen_abs_var(
+         model, GRBLinExpr(gen_var(
+            model, x,
+            format("{}_input",var_name),
+            format("{}_input",constr_name)
+         )),
+         var_name, constr_name,
+         use_max, objective
+      );
+   }
    GRBVar var_abs = model.addVar(0, GRB_INFINITY, 0, GRB_CONTINUOUS, var_name);
    model.addGenConstrAbs(var_abs, x, constr_name);
    return var_abs;
@@ -102,24 +120,88 @@ GRBVar gen_abs_var(
 
 GRBVar gen_abs_var(
    GRBModel& model, const GRBLinExpr& x,
-   const string& var_name, const string& constr_name
+   const string& var_name, const string& constr_name,
+   bool use_max = false, bool objective = false
 ) {
+   if(objective || use_max) {
+      GRBVar var_abs = model.addVar(0, GRB_INFINITY, 0, GRB_CONTINUOUS, var_name);
+      model.addConstr(x <= var_abs, format("{}_plus",constr_name));
+      model.addConstr(-x <= var_abs, format("{}_minus",constr_name));
+      if(!objective) {
+         GRBVar a_or_b = model.addVar(0, 1, 0, GRB_BINARY, format("{}_or",var_name));
+         model.addGenConstrIndicator(a_or_b, 1, var_abs - x, GRB_GREATER_EQUAL, 0, format("{}_on",constr_name));
+         model.addGenConstrIndicator(a_or_b, 0, var_abs + x, GRB_GREATER_EQUAL, 0, format("{}_off",constr_name));
+      }
+      return var_abs;
+   }
    return gen_abs_var(
       model, gen_var(
          model, x,
          format("{}_input",var_name),
          format("{}_input",constr_name)
       ),
-      var_name, constr_name
+      var_name, constr_name,
+      use_max, objective
    );
 }
 
 template<typename T>
 GRBLinExpr gen_abs_expr(
    GRBModel& model, const T& x,
+   const string& var_name, const string& constr_name,
+   bool use_max = false, bool objective = false
+) {
+   return gen_abs_var(model,x,var_name,constr_name,use_max, objective);
+}
+
+GRBVar gen_max_var(
+   GRBModel& model, const GRBLinExpr& a, const GRBLinExpr& b,
    const string& var_name, const string& constr_name
 ) {
-   return gen_abs_var(model,x,var_name,constr_name);
+   GRBVar var_max = model.addVar(0, GRB_INFINITY, 0, GRB_CONTINUOUS, var_name);
+   GRBVar a_or_b = model.addVar(0, 1, 0, GRB_BINARY, format("{}_or",var_name));
+   model.addConstr(var_max >= a, format("{}_a",constr_name));
+   model.addConstr(var_max >= b, format("{}_b",constr_name));
+   model.addGenConstrIndicator(a_or_b, 1, var_max - a, GRB_LESS_EQUAL, 0, format("{}_on",constr_name));
+   model.addGenConstrIndicator(a_or_b, 0, var_max - b, GRB_LESS_EQUAL, 0, format("{}_off",constr_name));
+   return var_max;
+}
+
+GRBLinExpr gen_max_expr(
+   GRBModel& model, const GRBLinExpr& a, const GRBLinExpr& b,
+   const string& var_name, const string& constr_name
+) {
+   return gen_max_var(
+      model,
+      a,b,
+      var_name,
+      constr_name
+   );
+}
+
+GRBVar gen_min_var(
+   GRBModel& model, const GRBLinExpr& a, const GRBLinExpr& b,
+   const string& var_name, const string& constr_name
+) {
+   GRBVar var_min = model.addVar(0, GRB_INFINITY, 0, GRB_CONTINUOUS, var_name);
+   GRBVar a_or_b = model.addVar(0, 1, 0, GRB_BINARY, format("{}_or",var_name));
+   model.addConstr(var_min <= a, format("{}_a",constr_name));
+   model.addConstr(var_min <= b, format("{}_b",constr_name));
+   model.addGenConstrIndicator(a_or_b, 1, var_min - a, GRB_GREATER_EQUAL, 0, format("{}_on",constr_name));
+   model.addGenConstrIndicator(a_or_b, 0, var_min - b, GRB_GREATER_EQUAL, 0, format("{}_off",constr_name));
+   return var_min;
+}
+
+GRBLinExpr gen_min_expr(
+   GRBModel& model, const GRBLinExpr& a, const GRBLinExpr& b,
+   const string& var_name, const string& constr_name
+) {
+   return gen_min_var(
+      model,
+      a,b,
+      var_name,
+      constr_name
+   );
 }
 
 GRBVar gen_max_var(
@@ -261,21 +343,24 @@ GRBVar gen_sum_var(
 
 GRBLinExpr gen_abs_error_expr(
    GRBModel& model, const GRBLinExpr& y, const GRBLinExpr& ty,
-   const string& var_name,  const string& constr_name
+   const string& var_name,  const string& constr_name,
+   bool use_max = false, bool objective = false
 ) {
-   return gen_abs_expr(model, y - ty, var_name, constr_name);
+   return gen_abs_expr(model, y - ty, var_name, constr_name, use_max,objective);
 }
 
 GRBVar gen_abs_error_var(
    GRBModel& model, const GRBLinExpr& y, const GRBLinExpr& ty,
-   const string& var_name,  const string& constr_name
+   const string& var_name,  const string& constr_name,
+   bool use_max = false, bool objective = false
 ) {
    return gen_var(
       model,
       gen_abs_error_expr(
          model, y, ty, 
          format("{}_input",var_name),
-         format("{}_input",constr_name)
+         format("{}_input",constr_name),
+         use_max,objective
       ),
       var_name, constr_name, 0
    );
@@ -385,14 +470,13 @@ GRBVar gen_hardtanh_var(
    const string& var_name, const string& constr_name,
    const pair<double,double>& limits = {-1,1}
 ) {
-   GRBVar ht_min = model.addVar(
-      -GRB_INFINITY, limits.first, 0,
-      GRB_CONTINUOUS, format("{}_min", var_name)
+   GRBVar ht_min = gen_min_var(
+      model,z,
+      limits.second,
+      format("{}_min",var_name),
+      format("{}_min",constr_name)
    );
-   GRBVar ht = model.addVar(limits.first, limits.second, 0, GRB_CONTINUOUS, var_name);
-   model.addGenConstrMin(ht_min, &z, 1, limits.first, format("{}_min", constr_name));
-   model.addGenConstrMax(ht, &ht_min, 1, limits.second, constr_name);
-   return ht;
+   return gen_max_var(model,ht_min,limits.first,var_name,constr_name);
 }
 
 GRBVar gen_hardtanh_var(
@@ -424,19 +508,13 @@ GRBVar gen_hardsigmoid_var(
    GRBModel& model, const GRBLinExpr& z,
    const string& var_name, const string& constr_name
 ) {
-   GRBVar hs_z = model.addVar(
-      -GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS,
-      format("{}_z", var_name)
+   GRBVar hs_min = gen_min_var(
+      model,
+      z / 6 + 0.5,1,
+      format("{}_min",var_name),
+      format("{}_min",constr_name)
    );
-   GRBVar hs_max = model.addVar(
-      -GRB_INFINITY, 1, 0, GRB_CONTINUOUS,
-      format("{}_max", var_name)
-   );
-   GRBVar hs = model.addVar(0, 1, 0, GRB_CONTINUOUS, var_name);
-   model.addConstr(z / 6 + 0.5 == hs, format("{}_hsin", constr_name));
-   model.addGenConstrMin(hs_max, &hs_z, 1, 1, format("{}_min", constr_name));
-   model.addGenConstrMax(hs, &hs_max, 1, 0, constr_name);
-   return hs;
+   return gen_max_var(model,hs_min,0,var_name,constr_name);
 }
 
 template<typename T>
@@ -451,11 +529,13 @@ GRBVar gen_ReLU6_var(
    GRBModel& model, const GRBVar& z,
    const string& var_name, const string& constr_name
 ) {
-   GRBVar relu6_max = model.addVar(0, GRB_INFINITY, 0, GRB_CONTINUOUS, format("{}_max", var_name));
-   GRBVar relu6 = model.addVar(0, 6, 0, GRB_CONTINUOUS, var_name);
-   model.addGenConstrMax(relu6_max, &z, 1, 0, format("{}_max", constr_name));
-   model.addGenConstrMin(relu6, &relu6_max, 1, 6, constr_name);
-   return relu6;
+   GRBVar relu6_max = gen_max_var(
+      model,
+      z,0,
+      format("{}_max",var_name),
+      format("{}_max",constr_name)
+   );
+   return gen_min_var(model,relu6_max,6,var_name,constr_name);
 }
 
 GRBVar gen_ReLU6_var(
@@ -485,9 +565,7 @@ GRBVar gen_ReLU_var(
    GRBModel& model, const GRBVar& z,
    const string& var_name, const string& constr_name
 ) {
-   GRBVar relu = model.addVar(0, GRB_INFINITY, 0, GRB_CONTINUOUS, var_name);
-   model.addGenConstrMax(relu, &z, 1, 0, constr_name);
-   return relu;
+   return gen_max_var(model,z,0,var_name,constr_name);
 }
 
 GRBVar gen_ReLU_var(
@@ -518,16 +596,18 @@ GRBLinExpr gen_LeakyReLU_expr(
    const string& var_name, const string& constr_name,
    double neg_coef = 0.25
 ) {
-   GRBVar lrelu_max = model.addVar(
-      -GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS,
-      format("{}_max", var_name)
+   GRBVar lrelu_max = gen_max_var(
+      model,
+      z,0,
+      format("{}_max", var_name),
+      format("{}_max", constr_name)
    );
-   GRBVar lrelu_min = model.addVar(
-      -GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS,
-      format("{}_min", var_name)
+   GRBVar lrelu_min = gen_min_var(
+      model,
+      z,0,
+      format("{}_min", var_name),
+      format("{}_min", constr_name)
    );
-   model.addGenConstrMax(lrelu_max, &z, 1, 0, format("{}_max", constr_name));
-   model.addGenConstrMin(lrelu_min, &z, 1, 0, format("{}_min", constr_name));
    return lrelu_max + neg_coef * lrelu_min;
 }
 
@@ -706,7 +786,8 @@ GRBLinExpr gen_l1w_expr(
          expr += 1.0 / (w_i_size * w_j_size) * gen_abs_expr(
             model, w,
             format("{}_{}_{}",var_name,i,j),
-            format("{}_w{},{}",constr_name,i,j)
+            format("{}_w{},{}",constr_name,i,j),
+            true,true
          );
       }
    }
@@ -736,7 +817,8 @@ GRBLinExpr gen_l1a_expr(
       expr += coef * gen_abs_expr(
          model, a,
          format("{}_{}",var_name,j),
-         format("{}_N{}",constr_name,j)
+         format("{}_N{}",constr_name,j),
+         true,true
       );
    }
    return expr;
@@ -759,7 +841,8 @@ template<typename T>
 GRBLinExpr gen_class_error_expr(
    GRBModel& model, const vec<T>& y, const string& var_name,
    const string& constr_name, const vec<double>& ty,
-   double zero_tolerance = 0.0001
+   double zero_tolerance = 0.0001, bool constraint = false,
+   double constraint_tolerance = 0.1
 ) {
    vec<tuple<double,GRBLinExpr,int>> c_order;
    for(const auto& tup : views::zip( ty, y, views::iota(0) )) {
@@ -788,11 +871,19 @@ GRBLinExpr gen_class_error_expr(
             y_a - y_b + constrvio == log(tc_a / tc_b),
             format("{}_Rel{},{}", constr_name, j_a, j_b)
          );
-         expr += gen_abs_expr(
+         GRBLinExpr var_expr = gen_abs_expr(
             model, constrvio,
             format("{}_{}_{}_abs", var_name,    j_a, j_b),
-            format("{}_Err{},{}",  constr_name, j_a, j_b)
+            format("{}_Err{},{}",  constr_name, j_a, j_b),
+            !constraint,!constraint
          );
+         expr += var_expr;
+         if(constraint) {
+            model.addConstr(
+               var_expr / log(tc_a / tc_b) <= constraint_tolerance,
+               format("{}_RelConstr{},{}", constr_name, j_a, j_b)
+            );
+         }
       }
    }
    return expr;
@@ -802,14 +893,17 @@ template<typename T>
 GRBVar gen_class_error_var(
    GRBModel& model, const vec<T>& y, const string& var_name,
    const string& constr_name, const vec<double>& ty,
-   double zero_tolerance = 0.0001
+   double zero_tolerance = 0.0001, bool constraint = false,
+   double constraint_tolerance = 0.1
 ) {
    return gen_var(
       model,
       gen_class_error_expr(
          model,y,
          var_name,constr_name,
-         ty,zero_tolerance
+         ty,zero_tolerance,
+         constraint,
+         constraint_tolerance
       ),
       format("{}_output",var_name),
       format("{}_output",constr_name),
@@ -820,15 +914,24 @@ GRBVar gen_class_error_var(
 template<typename T>
 GRBLinExpr gen_regression_error_expr(
    GRBModel& model, const vec<T>& y, const string& var_name,
-   const string& constr_name, const vec<double>& ty
+   const string& constr_name, const vec<double>& ty,
+   bool constraint = false, double constraint_tolerance = 0.1
 ) {
    GRBLinExpr expr;
    for(const auto& [i,y,ty] : views::zip( views::iota(0), y, ty )) {
-      expr += gen_abs_error_expr(
+      GRBLinExpr var_expr = gen_abs_error_expr(
          model, y, ty,
          format("{}_{}",  var_name,    i),
-         format("{}_N{}", constr_name, i)
+         format("{}_N{}", constr_name, i),
+         !constraint,!constraint
       );
+      expr += var_expr;
+      if(constraint) {
+         model.addConstr(
+            var_expr / ty <= constraint_tolerance,
+            format("{}_NConstr{}", constr_name,i)
+         );
+      }
    }
    return expr;
 }
@@ -836,14 +939,16 @@ GRBLinExpr gen_regression_error_expr(
 template<typename T>
 GRBVar gen_regression_error_var(
    GRBModel& model, const vec<T>& y, const string& var_name,
-   const string& constr_name, const vec<double>& ty
+   const string& constr_name, const vec<double>& ty,
+   bool constraint = false, double constraint_tolerance = 0.1
 ) {
    return gen_var(
       model,
       gen_regression_error_expr(
          model,y,
          var_name,constr_name,
-         ty
+         ty,constraint,
+         constraint_tolerance
       ),
       format("{}_output",var_name),
       format("{}_output",constr_name),
@@ -940,7 +1045,8 @@ GRBModel get_model(
    const vec<optional<double>>& l1a_norm,
    const vec<optional<double>>& l1w_norm,
    const mat<double>& fx, const mat<double>& reg_ty, const mat<double>& class_ty,
-   double zero_tolerance = 0.0001
+   double zero_tolerance = 0.0001, double constr_frac = 0.0,
+   double constraint_tolerance = 0.1
 ) {
    GRBModel model(environment);
    ten4<GRBLinExpr> b(L);
@@ -968,6 +1074,7 @@ GRBModel get_model(
       }
       bias[k] = model.addVar(bias_w[k], bias_w[k], 0, GRB_CONTINUOUS, format("bias_{}",k));
    }
+   int constr_size = constr_frac * fx.size();
    GRBLinExpr EC_expr, ER_expr;
    for(const auto& [t,fx,tc_y,treg_y] : views::zip(views::iota(0),fx,class_ty,reg_ty)) {
       cout << "Processing case: " << t << "\n";
@@ -996,16 +1103,30 @@ GRBModel get_model(
       }
       const auto& ry_view = a | views::take(treg_y.size());
       const auto& cy_view = a | views::drop(treg_y.size());
-      EC_expr += gen_class_error_expr(
-         model, vec<GRBLinExpr>( cy_view.begin(), cy_view.end() ),
-         format("EC_{}",t), format("ClassE_{}",t),
-         tc_y, zero_tolerance
-      );
-      ER_expr += gen_regression_error_expr(
-         model, vec<GRBLinExpr>( ry_view.begin(), ry_view.end() ),
-         format("ER_{}",t), format("RegE_{}",t),
-         treg_y
-      );
+      if(t <= constr_size) {
+         gen_class_error_expr(
+            model, vec<GRBLinExpr>( cy_view.begin(), cy_view.end() ),
+            format("EC_{}",t), format("ClassE_{}",t),
+            tc_y, zero_tolerance,true,constraint_tolerance
+         );
+         gen_regression_error_expr(
+            model, vec<GRBLinExpr>( ry_view.begin(), ry_view.end() ),
+            format("ER_{}",t), format("RegE_{}",t),
+            treg_y,true,constraint_tolerance
+         );
+      }
+      else {
+         EC_expr += gen_class_error_expr(
+            model, vec<GRBLinExpr>( cy_view.begin(), cy_view.end() ),
+            format("EC_{}",t), format("ClassE_{}",t),
+            tc_y, zero_tolerance
+         );
+         ER_expr += gen_regression_error_expr(
+            model, vec<GRBLinExpr>( ry_view.begin(), ry_view.end() ),
+            format("ER_{}",t), format("RegE_{}",t),
+            treg_y
+         );
+      }
    }
    model.setObjective(EC_expr + ER_expr + L1_expr, GRB_MINIMIZE);
    return model;
@@ -1171,7 +1292,10 @@ variant< unordered_map< string, vec<string> >, string > process_opts(int argc, c
       {"use_mask", 0},
       {"use_leakyReLU", 0},
       {"use_bits", 0},
-      {"zero_tolerance", 1}
+      {"zero_tolerance", 1},
+      {"constr_tol", 1},
+      {"constr_frac", 1},
+      {"mst_file", 1}
    };
    unordered_map< string, vec<string> > processed_opts;
    int argi = 1;
@@ -1329,9 +1453,9 @@ int main(int argc, const char* argv[]) try {
       }
    }
    string file_path = (save_path / safe_suffix(load_name,save_name)).string();
-   string ResultFile = format("{}.sol",file_path);
+   string ResultFile = format("{}.sol.xz",file_path);
    string SolFiles = file_path;
-   string LogFile = format("{}.log",file_path);
+   string LogFile = format("{}.log.xz",file_path);
    GRBEnv ambiente;
    stringstream argstream;
    int LogToConsole = !opts.contains("no_log_to_console");
@@ -1344,58 +1468,67 @@ int main(int argc, const char* argv[]) try {
    });
    process_yes_arg(opts, "best_obj_stop", [&argstream,&ambiente](const auto& args) {
       double BestObjStop;
-      argstream.str(args[0]);
+      argstream = stringstream(args[0]);
       argstream >> BestObjStop;
       ambiente.set(GRB_DoubleParam_BestObjStop, BestObjStop);
    });
    double zero_tolerance = 0.001;
    process_yes_arg(opts, "zero_tolerance", [&argstream,&zero_tolerance](const auto& args) {
-      argstream.str(args[0]);
+      argstream = stringstream(args[0]);
       argstream >> zero_tolerance;
+   });
+   double constraint_tolerance = 0.1;
+   process_yes_arg(opts, "constr_tol", [&argstream,&constraint_tolerance](const auto& args) {
+      argstream = stringstream(args[0]);
+      argstream >> constraint_tolerance;
+   });
+   double constraint_frac = 0.0;
+   process_yes_arg(opts, "constr_tol", [&argstream,&constraint_frac](const auto& args) {
+      argstream = stringstream(args[0]);
+      argstream >> constraint_frac;
    });
    process_yes_arg(opts, "feas_tol", [&argstream,&ambiente](const auto& args) {
       double FeasibilityTol;
-      argstream.str(args[0]);
+      argstream = stringstream(args[0]);
       argstream >> FeasibilityTol;
       ambiente.set(GRB_DoubleParam_FeasibilityTol, FeasibilityTol);
    });
    process_yes_arg(opts, "int_feas_tol", [&argstream,&ambiente](const auto& args) {
       double IntFeasTol;
-      argstream.str(args[0]);
+      argstream = stringstream(args[0]);
       argstream >> IntFeasTol;
       ambiente.set(GRB_DoubleParam_IntFeasTol, IntFeasTol);
    });
    process_yes_arg(opts, "iteration_limit", [&argstream,&ambiente](const auto& args) {
       double IterationLimit;
-      argstream.str(args[0]);
+      argstream = stringstream(args[0]);
       argstream >> IterationLimit;
       ambiente.set(GRB_DoubleParam_IterationLimit, IterationLimit);
    });
    process_yes_arg(opts, "opt_tol", [&argstream,&ambiente](const auto& args) {
       double OptimalityTol;
-      argstream.str(args[0]);
+      argstream = stringstream(args[0]);
       argstream >> OptimalityTol;
       ambiente.set(GRB_DoubleParam_OptimalityTol, OptimalityTol);
    });
    process_yes_arg(opts, "solution_limit", [&argstream,&ambiente](const auto& args) {
       int SolutionLimit;
-      argstream.str(args[0]);
+      argstream = stringstream(args[0]);
       argstream >> SolutionLimit;
       ambiente.set(GRB_IntParam_SolutionLimit, SolutionLimit);
    });
    process_yes_arg(opts, "time_limit", [&argstream,&ambiente](const auto& args) {
       double TimeLimit;
-      argstream.str(args[0]);
+      argstream = stringstream(args[0]);
       argstream >> TimeLimit;
       ambiente.set(GRB_DoubleParam_TimeLimit, TimeLimit);
    });
    process_yes_arg(opts, "node_limit", [&argstream,&ambiente](const auto& args) {
       double NodeLimit;
-      argstream.str(args[0]);
+      argstream = stringstream(args[0]);
       argstream >> NodeLimit;
       ambiente.set(GRB_DoubleParam_NodeLimit, NodeLimit);
    });
-
    int JSONSolDetail = 1;
    ambiente.set(GRB_IntParam_JSONSolDetail, JSONSolDetail);
    bool optimize = !opts.contains("no_optimize");
@@ -1404,19 +1537,21 @@ int main(int argc, const char* argv[]) try {
    bool save_sol = !opts.contains("no_save_sol");
    bool save_mst = !opts.contains("no_save_mst");
    bool save_json = !opts.contains("no_save_json"); 
-
-   // construcción del modelo
    GRBModel modelo = get_model(
       ambiente, T, L, C, AF,
       mask, precision, bits, bias,
       leakyReLU, hardtanh, dropout, l1a_norm, l1w_norm,
       features, class_targets, regression_targets,
-      zero_tolerance
+      zero_tolerance, constraint_frac, constraint_tolerance
    );
-   // ------ resolución del modelo
    if(save_lp)
-      modelo.write(path(format("{}.lp",file_path)).string());
+      modelo.write(path(format("{}.lp.xz",file_path)).string());
    if(optimize) {
+      process_yes_arg(opts, "mst_file", [&argstream,&modelo](const auto& args) {
+         path mst_path(args[0]);
+         modelo.read(mst_path.string());
+      });
+      modelo.update();
       modelo.optimize( );
       int Status = modelo.get(GRB_IntAttr_Status);
       switch(Status) {
@@ -1428,20 +1563,20 @@ int main(int argc, const char* argv[]) try {
          case GRB_TIME_LIMIT :
          case GRB_INTERRUPTED :
             if(save_sol) {
-               modelo.write(format("{}.sol",file_path));
+               modelo.write(format("{}.sol.xz",file_path));
             }
             if(save_json) {
-               modelo.write(format("{}.json",file_path));
+               modelo.write(format("{}.json.xz",file_path));
             } 
             if(save_mst) {
-               modelo.write(format("{}.mst",file_path));
+               modelo.write(format("{}.mst.xz",file_path));
             }
             break;
          case GRB_INFEASIBLE :
             cout << "Modelo infactible\n";
             if(save_ilp) {
                modelo.computeIIS( );
-               modelo.write(format("{}.ilp",file_path));
+               modelo.write(format("{}.ilp.xz",file_path));
             }
             break;
          case GRB_UNBOUNDED :

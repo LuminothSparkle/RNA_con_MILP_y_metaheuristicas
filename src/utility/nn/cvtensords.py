@@ -530,39 +530,53 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
         for label in label_type:
             if subset is None:
                 data[label] = self.tensors[label].cpu().detach().numpy()
-            elif isinstance(subset, str) :
+            elif isinstance(subset, str):
                 match subset:
                     case 'all':
-                        data[label] = self.tensors[label].cpu().detach().numpy()
+                        data[label] = self.tensors[
+                            label
+                        ].cpu().detach().numpy()
                     case 'train':
                         if self.train_indexes is not None:
-                            data[label] = self.tensors[label][self.train_indexes].cpu().detach().numpy()
+                            data[label] = self.tensors[label][
+                                self.train_indexes
+                            ].cpu().detach().numpy()
                         else:
-                            data[label] = self.tensors[label].cpu().detach().numpy()
+                            data[label] = self.tensors[
+                                label
+                            ].cpu().detach().numpy()
                     case 'test':
                         if self.test_indexes is not None:
-                            data[label] = self.tensors[label][self.test_indexes].cpu().detach().numpy()
+                            data[label] = self.tensors[label][
+                                self.test_indexes
+                            ].cpu().detach().numpy()
                         else:
-                            data[label] = self.tensors[label].cpu().detach().numpy()
+                            data[label] = self.tensors[
+                                label
+                            ].cpu().detach().numpy()
                     case _:
                         return None
             else:
-                data[label] = self.tensors[label][list(subset)].cpu().detach().numpy()
+                data[label] = self.tensors[label][
+                    list(subset)
+                ].cpu().detach().numpy()
         if raw:
             dataframe_dict = {}
-            for label in data:
-                if len(data[label].shape) == 2:
-                    for i in range(data[label].shape[1]):
-                        dataframe_dict[f'{label}_{i}'] = data[label][:,i].squeeze()
+            for label, label_data in data.items():
+                if len(label_data.shape) == 2:
+                    for i in range(label_data.shape[1]):
+                        dataframe_dict[f'{label}_{i}'] = label_data[
+                            :, i
+                        ].squeeze()
                 else:
-                    dataframe_dict[label] = data[label].squeeze()
+                    dataframe_dict[label] = label_data.squeeze()
             dataframe = DataFrame(dataframe_dict)
         else:
             dataframe_dict = {}
-            for label in data:
+            for label, label_data in data.items():
                 dataframe_dict[label] = self.label_decode(
                     label,
-                    data[label]
+                    label_data
                 ).squeeze()
             dataframe = DataFrame(dataframe_dict)
         return dataframe
