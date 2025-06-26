@@ -4,3 +4,4 @@
 *.ps
 *.png
 /src/utility/nn/__pycache__
+*.onnx

@@ -113,16 +113,38 @@
             }
         },
         {
-            "label": "Regenerate minibatch for Breast Cancer",
+            "label": "Regenerate features minibatch for Breast Cancer",
             "command": "python",
             "args": [
                 "${workspaceFolder}/src/gurobi/batchgen.py",
                 "-sp",
                 "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/gurobi",
                 "-lf",
-                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/gurobi/",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/dataframes/model_best/bcw_train_ftr.csv",
                 "-bs",
-                "10",
+                "100",
+            ],
+            "type": "shell",
+            "group": {
+                "kind": "build",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true
+            }
+        },
+        {
+            "label": "Regenerate class targets minibatch for Breast Cancer",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/gurobi/batchgen.py",
+                "-sp",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/gurobi",
+                "-lf",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/dataframes/model_best/bcw_train_cls_tgt.csv",
+                "-bs",
+                "100",
             ],
             "type": "shell",
             "group": {

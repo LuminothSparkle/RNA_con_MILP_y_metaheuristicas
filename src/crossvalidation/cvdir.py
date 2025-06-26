@@ -3,7 +3,7 @@ A
 """
 import argparse
 from argparse import ArgumentParser
-from threading import Thread
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from pandas import DataFrame
 import matplotlib.pyplot as pyplot
@@ -73,58 +73,6 @@ def generate_cv_data(
     """
     A
     """
-    models_path = dir_path / 'models'
-    models_path.mkdir(parents=True, exist_ok=True)
-    save_models(
-        models=cv_data['model'],
-        dir_path=models_path,
-        name=name,
-        exists_ok=exists_ok
-    )
-    dataframes_path = dir_path / 'dataframes'
-    dataframes_path.mkdir(parents=True, exist_ok=True)
-    for i, dataset, train_indexes, test_indexes in zip(
-        [*range(len(cv_data['dataset'])), 'best', 'worst'],
-        [*cv_data['dataset'], cv_data['dataset'][0], cv_data['dataset'][-1]],
-        [
-            *cv_data['train index'],
-            cv_data['train index'][0],
-            cv_data['train index'][-1]
-        ],
-        [
-            *cv_data['test index'],
-            cv_data['test index'][0],
-            cv_data['test index'][-1]
-        ]
-    ):
-        dir_path = dataframes_path / f'model_{i}'
-        dir_path.mkdir(parents=True, exist_ok=True)
-        for label_type, suffix in [
-            ('all', 'raw'),
-            ('class targets', 'cls_tgt'),
-            ('regression targets', 'reg_tgt'),
-            ('features', 'ftr')
-        ]:
-            save_dataset(
-                dataset=dataset,
-                file_path=dir_path / (
-                    f'{safe_suffix(name, 'train')}_{suffix}.csv'
-                ),
-                subset=train_indexes,
-                label_type=label_type,
-                raw=True,
-                exists_ok=exists_ok
-            )
-            save_dataset(
-                dataset=dataset,
-                file_path=dir_path / (
-                    f'{safe_suffix(name, 'test')}_{suffix}.csv'
-                ),
-                subset=test_indexes,
-                label_type=label_type,
-                raw=True,
-                exists_ok=exists_ok
-            )
     class_data, regression_data = {}, {}
     model_predictions = []
     for model, dataset, test_dataloader in zip(
@@ -140,45 +88,107 @@ def generate_cv_data(
             if label not in regression_data:
                 regression_data[label] = []
             regression_data[label] += [predictions[label]]
-    boxplot_figures_path = dir_path / 'boxplots'
-    boxplot_figures_path.mkdir(parents=True, exist_ok=True)
-    class_labels_data, regression_labels_data, *_ = save_gen_metrics(
-        class_data=class_data,
-        regression_data=regression_data,
-        dir_path=boxplot_figures_path,
-        name=name,
-        exists_ok=exists_ok
-    )
-    for name_type, i in {'best': 0, 'worst': -1}.items():
-        save_displays(
-            model_predictions=model_predictions[i],
-            class_encoders=cv_data['dataset'][i].encoders,
-            class_targets=cv_data['dataset'][i].labels['class targets'],
-            dir_path=dir_path / name_type,
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures_list = []
+        models_path = dir_path / 'models'
+        models_path.mkdir(parents=True, exist_ok=True)
+        futures_list += [executor.submit(
+            save_models,
+            models=cv_data['model'],
+            dir_path=models_path,
+            name=name,
+            exists_ok=exists_ok
+        )]
+        dataframes_path = dir_path / 'dataframes'
+        dataframes_path.mkdir(parents=True, exist_ok=True)
+        for i, dataset, train_indexes, test_indexes in zip(
+            [*range(len(cv_data['dataset'])), 'best', 'worst'],
+            [*cv_data['dataset'], cv_data['dataset'][0], cv_data['dataset'][-1]],
+            [
+                *cv_data['train index'],
+                cv_data['train index'][0],
+                cv_data['train index'][-1]
+            ],
+            [
+                *cv_data['test index'],
+                cv_data['test index'][0],
+                cv_data['test index'][-1]
+            ]
+        ):
+            model_path = dataframes_path / f'model_{i}'
+            model_path.mkdir(parents=True, exist_ok=True)
+            for label_type, suffix in [
+                ('all', 'raw'),
+                ('class targets', 'cls_tgt'),
+                ('regression targets', 'reg_tgt'),
+                ('features', 'ftr')
+            ]:
+                futures_list += [executor.submit(
+                    save_dataset,
+                    dataset=dataset,
+                    file_path=model_path / (
+                        f'{safe_suffix(name, 'train')}_{suffix}.csv'
+                    ),
+                    subset=train_indexes,
+                    label_type=label_type,
+                    raw=True,
+                    exists_ok=exists_ok
+                )]
+                futures_list += [executor.submit(
+                    save_dataset,
+                    dataset=dataset,
+                    file_path=model_path / (
+                        f'{safe_suffix(name, 'test')}_{suffix}.csv'
+                    ),
+                    subset=test_indexes,
+                    label_type=label_type,
+                    raw=True,
+                    exists_ok=exists_ok
+                )]
+        for name_type, i in {'best': 0, 'worst': -1}.items():
+            futures_list += [executor.submit(
+                save_displays,
+                model_predictions=model_predictions[i],
+                class_encoders=cv_data['dataset'][i].encoders,
+                class_targets=cv_data['dataset'][i].labels['class targets'],
+                dir_path=dir_path / name_type,
+                name=name,
+                exists_ok=exists_ok
+            )]
+        boxplot_figures_path = dir_path / 'boxplots'
+        boxplot_figures_path.mkdir(parents=True, exist_ok=True)
+        class_labels_data, regression_labels_data, *_ = save_gen_metrics(
+            class_data=class_data,
+            regression_data=regression_data,
+            dir_path=boxplot_figures_path,
             name=name,
             exists_ok=exists_ok
         )
-    dataframes_path = dir_path / 'dataframes'
-    dataframes_path.mkdir(parents=True, exist_ok=True)
-    save_dataframes(
-        model_data={
-            'time lapsed': cv_data['train time'],
-            'loss': cv_data['loss'],
-            'parameters': cv_data['parameters']
-        },
-        class_labels_data=class_labels_data,
-        regression_labels_data=regression_labels_data,
-        dir_path=dataframes_path,
-        name=name,
-        exists_ok=exists_ok
-    )
-    save_log(
-        class_labels_data=class_labels_data,
-        regression_labels_data=regression_labels_data,
-        total_nanoseconds=numpy.sum(cv_data['train time']),
-        log_path=dir_path / f'{name}.log',
-        exists_ok=exists_ok
-    )
+        dataframes_path = dir_path / 'dataframes'
+        dataframes_path.mkdir(parents=True, exist_ok=True)
+        futures_list += [executor.submit(
+            save_dataframes,
+            model_data={
+                'time lapsed': cv_data['train time'],
+                'loss': cv_data['loss'],
+                'parameters': cv_data['parameters']
+            },
+            class_labels_data=class_labels_data,
+            regression_labels_data=regression_labels_data,
+            dir_path=dataframes_path,
+            name=name,
+            exists_ok=exists_ok
+        )]
+        futures_list += [executor.submit(
+            save_log,
+            class_labels_data=class_labels_data,
+            regression_labels_data=regression_labels_data,
+            total_nanoseconds=numpy.sum(cv_data['train time']),
+            log_path=dir_path / f'{name}.log',
+            exists_ok=exists_ok
+        )]
+        for future_data in futures_list:
+            future_data.result()
 
 
 def save_dataframes(
@@ -193,26 +203,28 @@ def save_dataframes(
     A
     """
     dir_path.mkdir(parents=True, exist_ok=True)
-    model_path = dir_path / f'{safe_suffix(name, "model")}.csv'
-    thread_list = []
-    thread_list += [Thread(
-        target=save_model_dataframe,
-        args=(model_data, model_path, exists_ok)
-    )]
-    for labels_data, labels_metrics_path in [
-        (class_labels_data, dir_path / f'{safe_suffix(name, "class")}.csv',),
-        (regression_labels_data, dir_path / (
-            f'{safe_suffix(name, "regression")}.csv'
-        ),)
-    ]:
-        thread_list += [Thread(
-            target=save_metrics_dataframe,
-            args=(labels_data, labels_metrics_path, exists_ok)
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures_list = []
+        futures_list += [executor.submit(
+            save_model_dataframe,
+            model_data,
+            dir_path / f'{safe_suffix(name, "model")}.csv',
+            exists_ok
         )]
-    for thread in thread_list:
-        thread.start()
-    for thread in thread_list:
-        thread.join()
+        futures_list += [executor.submit(
+            save_metrics_dataframe,
+            class_labels_data,
+            dir_path / f'{safe_suffix(name, "class")}.csv',
+            exists_ok
+        )]
+        futures_list += [executor.submit(
+            save_metrics_dataframe,
+            regression_labels_data,
+            dir_path / f'{safe_suffix(name, "regression")}.csv',
+            exists_ok
+        )]
+        for future_data in futures_list:
+            future_data.result()
 
 
 def save_displays(
@@ -234,32 +246,37 @@ def save_displays(
         None: '>d', 'all': '>2.3%',
         'true': '>2.3%', 'pred': '>2.3%'
     }
-    for label, data in model_predictions.items():
-        if label in class_targets:
-            _, _, targets, pred = data
-            classes = class_encoders[label].classes_
-            base_name = f'{safe_suffix(name, label)}_cm'
-            for norm, fmt in formats.items():
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures_list = []
+        for label, data in model_predictions.items():
+            if label in class_targets:
+                _, _, targets, pred = data
+                classes = class_encoders[label].classes_
+                base_name = f'{safe_suffix(name, label)}_cm'
+                for norm, fmt in formats.items():
+                    for extension in extensions:
+                        figure_path = dir_path / f'{base_name}_{norm}.{extension}'
+                        futures_list += [executor.submit(
+                            save_confusion_matrix_figure,
+                            figure_path,
+                            label, classes, targets, pred, fmt, norm,
+                            exists_ok=exists_ok
+                        )]
+            else:
+                targets, pred = data
                 for extension in extensions:
-                    figure_path = dir_path / f'{base_name}_{norm}.{extension}'
-                    save_confusion_matrix_figure(
-                        figure_path,
-                        label, classes, targets, pred, fmt, norm,
-                        exists_ok=exists_ok
+                    figure_path = dir_path / (
+                        f'{safe_suffix(name, label)}_pe.{extension}'
                     )
-                    pyplot.close()
-        else:
-            targets, pred = data
-            for extension in extensions:
-                figure_path = dir_path / (
-                    f'{safe_suffix(name, label)}_pe.{extension}'
-                )
-                save_prediction_error_figure(
-                    figure_path,
-                    label, targets, pred,
-                    exists_ok=exists_ok
-                )
-                pyplot.close()
+                    futures_list += [executor.submit(
+                        save_prediction_error_figure,
+                        figure_path,
+                        label, targets, pred,
+                        exists_ok=exists_ok
+                    )]
+        for future_data in futures_list:
+            fig = future_data.result()
+            pyplot.close(fig)
 
 
 def save_gen_metrics(
@@ -279,26 +296,31 @@ def save_gen_metrics(
             'balanced accuracy', 'average precision', 'balanced accuracy',
             'matthews corrcoef'
         ]
-    labels_data = []
-    for data_type, data_manager in [
-        (class_data,      save_class_target_metrics),
-        (regression_data, save_regression_target_metrics)
-    ]:
-        labels_data_type = {}
-        for label, data in data_type.items():
-            data_metrics = data_manager(
-                dir_path / f'{safe_suffix(name, label)}.csv',
-                label, data
-            )
-            save_boxplots(
-                dir_path=dir_path, name=name,
-                label=label, metrics=data_metrics,
-                percentage_metrics=percentage_metrics,
-                extensions=extensions,
-                exists_ok=exists_ok
-            )
-            labels_data_type[label] = data_metrics.mean(axis='index')
-        labels_data += [labels_data_type]
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures_list = []
+        labels_data = []
+        for data_type, data_manager in [
+            (class_data,      save_class_target_metrics),
+            (regression_data, save_regression_target_metrics)
+        ]:
+            labels_data_type = {}
+            for label, data in data_type.items():
+                data_metrics = data_manager(
+                    dir_path / f'{safe_suffix(name, label)}.csv',
+                    label, data
+                )
+                futures_list += [executor.submit(
+                    save_boxplots,
+                    dir_path=dir_path, name=name,
+                    label=label, metrics=data_metrics,
+                    percentage_metrics=percentage_metrics,
+                    extensions=extensions,
+                    exists_ok=exists_ok
+                )]
+                labels_data_type[label] = data_metrics.mean(axis='index')
+            labels_data += [labels_data_type]
+        for future_data in futures_list:
+            future_data.result()
     return tuple(labels_data)
 
 
@@ -319,35 +341,40 @@ def save_boxplots(
         extensions = ['eps', 'png', 'pdf', 'svg', 'tiff', 'ps', 'raw']
     if percentage_metrics is None:
         percentage_metrics = []
-    for metric in metrics.columns:
-        if metric not in percentage_metrics:
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures_list = []
+        for metric in metrics.columns:
+            if metric not in percentage_metrics:
+                for extension in extensions:
+                    file_path = dir_path / (
+                        f'{safe_suffix(name, label)}_{metric}.{extension}'
+                    )
+                    futures_list += [executor.submit(
+                        save_boxplot_figure,
+                        file_path=file_path,
+                        target_label=label,
+                        values={metric: metrics[metric].to_numpy()},
+                        percentage=False,
+                        exists_ok=exists_ok
+                    )]
             for extension in extensions:
                 file_path = dir_path / (
-                    f'{safe_suffix(name, label)}_{metric}.{extension}'
+                    f'{safe_suffix(name, label)}_percentages.{extension}'
                 )
-                save_boxplot_figure(
+                futures_list += [executor.submit(
+                    save_boxplot_figure,
                     file_path=file_path,
                     target_label=label,
-                    values={metric: metrics[metric].to_numpy()},
-                    percentage=False,
+                    values={
+                        metric: metrics[metric].to_numpy()
+                        for metric in percentage_metrics
+                    },
+                    percentage=True,
                     exists_ok=exists_ok
-                )
-                pyplot.close()
-        for extension in extensions:
-            file_path = dir_path / (
-                f'{safe_suffix(name, label)}_percentages.{extension}'
-            )
-            save_boxplot_figure(
-                file_path=file_path,
-                target_label=label,
-                values={
-                    metric: metrics[metric].to_numpy()
-                    for metric in percentage_metrics
-                },
-                percentage=True,
-                exists_ok=exists_ok
-            )
-            pyplot.close()
+                )]
+        for future_data in futures_list:
+            fig = future_data.result()
+            pyplot.close(fig)
 
 
 def save_models(
@@ -370,21 +397,18 @@ def save_models(
     }
     name_dict[safe_suffix(name, 'best')] = models[0]
     name_dict[safe_suffix(name, 'worst')] = models[-1]
-    thread_list = []
-    for name, model in name_dict.items():
-        thread_list += [Thread(
-            target=save_model,
-            kwargs={
-                'module': model,
-                'dir_path': dir_path,
-                'name': name,
-                'exists_ok': exists_ok
-            }
-        )]
-    for thread in thread_list:
-        thread.start()
-    for thread in thread_list:
-        thread.join()
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures_list = []
+        for name, model in name_dict.items():
+            futures_list += [executor.submit(
+                save_model,
+                model,
+                dir_path,
+                name,
+                exists_ok
+            )]
+        for future_data in futures_list:
+            future_data.result()
 
 
 def main(args: argparse.Namespace):
