@@ -401,11 +401,11 @@ def save_models(
     """
     models_list = [
         *enumerate(models),
-        ('model_best', models[0]),
-        ('model_worst', models[-1])
+        ('best', models[0]),
+        ('worst', models[-1])
     ]
     for idx, model in models_list:
-        model_path = dir_path / idx
+        model_path = dir_path / f'model_{idx}'
         model_path.mkdir(parents=True, exist_ok=True)
         save_model(
             model,

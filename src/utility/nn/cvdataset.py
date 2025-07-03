@@ -9,14 +9,14 @@ from collections.abc import Iterable, Generator
 from time import perf_counter_ns
 from matplotlib.pylab import PCG64, SeedSequence
 import numpy
-from numpy import array, ndarray
+from numpy import array, ndarray, uint64
 from pandas import DataFrame, Index
 from sklearn.model_selection import BaseCrossValidator
 import torch
 from torch import Tensor
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader, Dataset, Subset
-from src.utility.nn.lineal import LinealNN
+from src.utility.nn.lineal import LinealNN, set_defaults
 
 
 class CrossvalidationDataset(Dataset):
@@ -126,6 +126,7 @@ def crossvalidate(
     cruzado de scikit learn utilizando los hyperparametros que
     definen la arquitectura de la red neuronal
     """
+    set_defaults()
     label_list = [
         'models_loss', 'models_train_loss', 'models_test_loss',
         'models_start_loss', 'models_train_time', 'models_fitted_state',
@@ -156,17 +157,14 @@ def crossvalidate(
                 test_dataset: Subset,
                 ss: SeedSequence
             ):
-                torch.set_default_device('cpu')
-                torch.set_default_dtype(torch.double)
-                if torch.cuda.is_available():
-                    torch.set_default_device('cuda')
-                    torch.set_default_dtype(torch.double)
+                set_defaults()
                 generator = torch.Generator(device=torch.get_default_device())
                 gen = numpy.random.default_rng(PCG64(ss))
                 generator.manual_seed(
-                    gen.integers(
-                        0, 0xffff_ffff_ffff_ffff  # type: ignore
-                    )
+                    int(gen.integers(
+                        low=0, high=0xffff_ffff_ffff_ffff,
+                        endpoint=True, dtype=uint64 
+                    ))
                 )
                 test_size = len(test_dataset)
                 train_size = len(train_dataset)
@@ -192,9 +190,10 @@ def crossvalidate(
                     epochs=epochs,
                     train_dataloader=train_dataloader,
                     test_dataloader=test_dataloader,
-                    seed=gen.integers(
-                        0, 0xffff_ffff_ffff_ffff  # type: ignore
-                    )
+                    seed=int(gen.integers(
+                        low=0, high=0xffff_ffff_ffff_ffff,
+                        endpoint=True, dtype=uint64
+                    ))
                 )
                 ns_t = perf_counter_ns()
                 train_loss, test_loss, start_loss, fitted_state = tup

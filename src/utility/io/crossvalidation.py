@@ -16,6 +16,7 @@ from sklearn.metrics import (
     d2_absolute_error_score, matthews_corrcoef, f1_score,
     log_loss, explained_variance_score
 )
+from src.utility.nn.lineal import set_defaults
 
 
 def save_crossvalidation(
@@ -26,6 +27,7 @@ def save_crossvalidation(
     """
     A
     """
+    set_defaults()
     assert exists_ok or not file_path.exists(), (
         f"El archivo {file_path} ya existe"
     )
@@ -39,6 +41,7 @@ def load_crossvalidation(
     """
     A
     """
+    set_defaults()
     assert not_exists_ok or file_path.exists(), (
         f"El archivo {file_path} no existe"
     )

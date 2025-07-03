@@ -27,10 +27,19 @@ from torch.nn.init import (
 from torch.nn.utils import fuse_linear_bn_weights
 
 
+def set_defaults():
+    torch.set_default_device('cpu')
+    torch.set_default_dtype(torch.double)
+    if torch.cuda.is_available():
+        torch.set_default_device('cuda')
+        torch.set_default_dtype(torch.double)
+
+
 def gen_linear_layer(layer: int, capacity: list[int]):
     """
     A
     """
+    set_defaults()
     assert capacity[-1] > 0, (
         "La capacidad final debe ser mayor a cero"
     )
@@ -39,7 +48,7 @@ def gen_linear_layer(layer: int, capacity: list[int]):
     )
     return (
         Linear(
-            capacity[layer],
+            capacity[layer] + 1,
             next(cap for cap in capacity[(layer + 1):] if cap > 0),
             bias=False
         )
@@ -121,6 +130,7 @@ class LinealNN(Module):
 
     def __init__(self):
         super().__init__()
+        set_defaults()
         self.seed = None
         self.layers = -1
         self.verbosity = 0
@@ -138,6 +148,7 @@ class LinealNN(Module):
         self.l1_activation = []
         self.l2_activation = []
         self.connection_dropout = []
+        self.learnable_layers = []
         self.log = {}
         self.loss_layer = Identity()
         self.inference_layer = Identity()
@@ -150,6 +161,7 @@ class LinealNN(Module):
         """
         A
         """
+        set_defaults()
         assert capacity[-1] > 0 and capacity[0] > 0, (
             "La capacidad final e inicial deben ser mayor a cero"
         )
@@ -340,12 +352,16 @@ class LinealNN(Module):
         """
         A
         """
+        set_defaults()
         self.masks = [  # type: ignore
             (
-                torch.full(
-                    (self.capacity[k + 1], self.capacity[k] + 1),
-                    1
-                ).bool()
+                torch.ones((
+                    next(
+                        cap for cap in self.capacity[(k + 1):]
+                        if cap > 0
+                    ),
+                    self.capacity[k] + 1
+                )).bool()
                 if masks[k] is None
                 else masks[k]
             )
@@ -354,15 +370,19 @@ class LinealNN(Module):
                 or isinstance(masks, dict)
                 and k in masks
             )
-            else torch.full(
-                (self.capacity[k + 1], self.capacity[k] + 1),
-                1
-            ).bool()
+            else torch.ones((
+                next(
+                    cap for cap in self.capacity[(k + 1):]
+                    if cap > 0
+                ),
+                self.capacity[k] + 1
+            )).bool()
             for k in range(self.layers)
         ]
         self.__update_masks()
 
     def __initialize_layers(self, capacity: list[int]):
+        set_defaults()
         layers = len(capacity) - 1
         self.bias_layers = ModuleList([
             ConstantPad1d((0, 1), 1) for _ in range(layers)
@@ -414,12 +434,13 @@ class LinealNN(Module):
                     )
         self.layers = layers
         self.__update_masks()
-        self.__upgdate_learnable_layers()
+        self.__update_learnable_layers()
 
     def __update_masks(self):
         """
         A
         """
+        set_defaults()
         for mask, linear_layer in zip(
             self.masks,
             self.linear_layers
@@ -435,6 +456,7 @@ class LinealNN(Module):
         """
         A
         """
+        set_defaults()
         self.optimizer = optimizer(self.parameters(), *args, **kwargs)
         self.scheduler = None
 
@@ -442,10 +464,12 @@ class LinealNN(Module):
         """
         A
         """
+        set_defaults()
         if self. optimizer is not None:
             self.scheduler = scheduler(self.optimizer, *args, **kwargs)
 
-    def __upgdate_learnable_layers(self):
+    def __update_learnable_layers(self):
+        set_defaults()
         for sequential_layer, learnable in zip(
             self.sequential_layers, self.learnable_layers
         ):
@@ -456,6 +480,7 @@ class LinealNN(Module):
         Implementacion necesaria para la implementacion de Module en Pytorch,
         es la evaluación hacia delante
         """
+        set_defaults()
         x = input_tensor
         for k, layer in enumerate(self.sequential_layers):
             x = layer(x)
@@ -521,6 +546,7 @@ class LinealNN(Module):
         """
         A
         """
+        set_defaults()
         l2_layers = [
             (
                 norm_weight *
@@ -539,6 +565,7 @@ class LinealNN(Module):
         """
         A
         """
+        set_defaults()
         l1_layers = [
             (
                 norm_weight
@@ -557,6 +584,7 @@ class LinealNN(Module):
         """
         A
         """
+        set_defaults()
         l2_layers = [
             (
                 norm_weight
@@ -575,6 +603,7 @@ class LinealNN(Module):
         """
         A
         """
+        set_defaults()
         l1_layers = [
             (
                 norm_weight
@@ -596,6 +625,7 @@ class LinealNN(Module):
         """
         A
         """
+        set_defaults()
         def closure():
             with ThreadPoolExecutor(max_workers=10) as executor:
                 self.train()
@@ -673,6 +703,7 @@ class LinealNN(Module):
         """
         A
         """
+        set_defaults()
         batch_loss = []
         self.log['norm loss'] = []
         self.log['raw loss'] = []
@@ -690,6 +721,7 @@ class LinealNN(Module):
         """
         A
         """
+        set_defaults()
         with torch.inference_mode():
             loss = numpy.mean([
                 self.loss_layer(self(X), y).cpu().detach().item()
@@ -708,6 +740,7 @@ class LinealNN(Module):
         """
         A
         """
+        set_defaults()
         if seed is None:
             seed = torch.seed()
         else:
@@ -741,6 +774,7 @@ class LinealNN(Module):
         Ciclo principal para obtener solamente la inferencia de la red neuronal
         sobre un conjunto de datos
         """
+        set_defaults()
         with torch.inference_mode():
             return self.inference_layer(
                 self(x)
@@ -751,6 +785,7 @@ class LinealNN(Module):
         Ciclo principal para calcular unicamente la perdida
         de los datos de prueba
         """
+        set_defaults()
         with torch.inference_mode():
             return self.test_epoch(dataloader)
 
@@ -759,6 +794,7 @@ class LinealNN(Module):
         Metodo que devuelve una lista de arreglos multidimesionales que
         contiene los pesos de las capas lineales en una red neuronal
         """
+        set_defaults()
         with torch.inference_mode():
             weights = []
             for k, linear in enumerate(self.linear_layers):
@@ -782,6 +818,7 @@ class LinealNN(Module):
         Metodo que devuelve una lista de arreglos multidimesionales
         que contiene los pesos de las capas lineales en una red neuronal
         """
+        set_defaults()
         for k in range(self.layers):
             if isinstance(self.linear_layers[k], Linear):
                 if self.batch_norm[k]:
@@ -808,6 +845,7 @@ class LinealNN(Module):
         """
         A
         """
+        set_defaults()
         arch_copy = LinealNN()
         arch_copy.load_state_dict(deepcopy(self.state_dict()), assign=True)
         arch_copy.set_masks(masks)  # type: ignore
@@ -817,22 +855,25 @@ class LinealNN(Module):
         """
         A
         """
+        set_defaults()
         self.learnable_layers = learnable
-        self.__upgdate_learnable_layers()
+        self.__update_learnable_layers()
 
     def enable_learnable_layer(self, layer: int):
         """
         A
         """
+        set_defaults()
         self.learnable_layers[layer] = True
-        self.__upgdate_learnable_layers()
+        self.__update_learnable_layers()
 
     def disable_learnable_layer(self, layer: int):
         """
         A
         """
+        set_defaults()
         self.learnable_layers[layer] = False
-        self.__upgdate_learnable_layers()
+        self.__update_learnable_layers()
 
 
 class InferenceModule(Module):
@@ -849,6 +890,7 @@ class InferenceModule(Module):
         """
         A
         """
+        set_defaults()
         return self.inference_function(input_tensor)
 
 
@@ -869,4 +911,5 @@ class LossModule(Module):
         """
         A
         """
+        set_defaults()
         return self.loss_function(input_a, input_b)

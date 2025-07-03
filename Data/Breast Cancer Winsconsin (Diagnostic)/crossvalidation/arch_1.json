@@ -1,5 +1,5 @@
 {
-    "verbose" : "vvv",
+    "verbose" : "v",
     "capacity" : [256, 128, 64, 16],
     "seed" : 42,
     "epochs" : 10000,

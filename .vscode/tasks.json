@@ -77,9 +77,9 @@
                 "--load_path",
                 "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)",
                 "--arch_path",
-                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/crossvalidation/arch_fast.json",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/crossvalidation/arch_1.json",
                 "--cv_path",
-                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/crossvalidation/cv_fast.json",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/crossvalidation/cv_1.json",
             ],
             "type": "shell",
             "group": {

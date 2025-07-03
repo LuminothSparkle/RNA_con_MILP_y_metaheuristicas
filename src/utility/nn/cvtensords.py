@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from matplotlib.pylab import PCG64, SeedSequence
 import numpy
 import numpy.random as numpyrand
-from numpy import ndarray
+from numpy import ndarray, uint64
 from numpy.typing import ArrayLike
 from pandas import DataFrame, Index
 import pandas
@@ -23,7 +23,7 @@ from sklearn.preprocessing import (
     LabelBinarizer, LabelEncoder, StandardScaler,
     OrdinalEncoder, MinMaxScaler, MaxAbsScaler
 )
-from src.utility.nn.lineal import LinealNN
+from src.utility.nn.lineal import LinealNN, set_defaults
 from src.utility.nn.cvdataset import CrossvalidationDataset
 
 
@@ -66,6 +66,7 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
         data_augment: int = 0,
         **kwargs
     ):
+        set_defaults()
         self.crossvalidator = crossvalidator
         self.train_dataframe = None
         self.test_dataframe = None
@@ -141,6 +142,7 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
         return cls(**generator)
 
     def __generate_features_tensors(self):
+        set_defaults()
         for label in self.labels['sparsed features']:
             self.ma_scalers[label] = MaxAbsScaler()
             self.ma_scaled[label] = self.ma_scalers[label].fit_transform(
@@ -219,6 +221,7 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
             )
 
     def __generate_targets_tensors(self):
+        set_defaults()
         for label in self.labels['class targets']:
             self.binarizers[label] = LabelBinarizer()
             self.binarized[label] = self.binarizers[label].fit_transform(
@@ -253,6 +256,7 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
             )
 
     def __generate_dataset(self):
+        set_defaults()
         self.size = self.original_size + (
             self.augment_size
             if self.augment_size is not None
@@ -283,6 +287,7 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
         self.dataset = TensorDataset(self.features_tensor, self.targets_tensor)
 
     def __generate_tensors(self):
+        set_defaults()
         self.features = DataFrame(
             torch.concat(
                 [
@@ -339,6 +344,7 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
         """
         Codifica los tensores en dataframes
         """
+        set_defaults()
         return torch.column_stack([
             *[
                 torch.tensor(
@@ -359,6 +365,7 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
         """
         Parte un tensor de acuerdo a las etiquetas de cada target
         """
+        set_defaults()
         return dict(zip(
             self.labels['targets'],
             pred.split_with_sizes(
@@ -374,6 +381,7 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
         """
         Parte un tensor de acuerdo a las etiquetas de cada caracteristica
         """
+        set_defaults()
         return dict(zip(
             self.labels['features'],
             features.split_with_sizes(
@@ -389,6 +397,7 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
         """
         Parte un tensor de acuerdo a las etiquetas de cada caracteristica
         """
+        set_defaults()
         return dict(zip(
             self.labels['features'],
             numpy.array_split(
@@ -405,6 +414,7 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
         """
         Parte un tensor de acuerdo a las etiquetas de cada caracteristica
         """
+        set_defaults()
         return dict(zip(
             self.labels['targets'],
             numpy.array_split(
@@ -474,6 +484,7 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
         Implementacion de la particion de los conjuntos de
         entrenamiento y prueba en la validacion cruzada
         """
+        set_defaults()
         if (
             self.crossvalidation_mode
             or self.train_indices is None
@@ -505,6 +516,7 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
         """
         A
         """
+        set_defaults()
         with torch.inference_mode():
             if indices is not None:
                 dataset = Subset(self, indices)
@@ -580,6 +592,7 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
         """
         A
         """
+        set_defaults()
         dataframe = None
         if label_type is None:
             label_type = self.labels['all']
@@ -646,6 +659,7 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
         """
         A
         """
+        set_defaults()
         ss = SeedSequence()
         if seed is not None:
             ss = SeedSequence(entropy=seed)
@@ -653,9 +667,10 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
         num_gen = numpyrand.default_rng(seed=PCG64(seed=ss))
         tor_gen = torch.Generator(device=torch.get_default_device())
         tor_gen.manual_seed(
-            num_gen.integers(
-                0, 0xffff_ffff_ffff_ffff  # type: ignore
-            )
+            int(num_gen.integers(
+                low=0, high=0xffff_ffff_ffff_ffff,
+                endpoint=True, dtype=uint64
+            ))
         )
         self.augment_size = data_augment
         added_tensor = {
@@ -778,6 +793,7 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
         Function de perdida general para los tensores, considerando
         casos de clases y regresion
         """
+        set_defaults()
         return torch.concat(
             [
                 pred
@@ -795,6 +811,7 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
         Function de perdida general para los tensores, considerando
         casos de clases y regresion
         """
+        set_defaults()
         target_splitted = self.split_pred_tensor(target)
         pred_splitted = self.split_pred_tensor(pred)
         loss = torch.tensor(0.0, dtype=torch.double)
