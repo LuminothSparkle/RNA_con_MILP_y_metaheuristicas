@@ -3,25 +3,27 @@ Modulo que contiene los metodos para realizar
 validacion cruzada con scikit learn y pytorch
 """
 from collections.abc import Iterable
+from matplotlib.pylab import PCG64, SeedSequence
 import numpy
+import numpy.random as numpyrand
 from numpy import ndarray
 from numpy.typing import ArrayLike
 from pandas import DataFrame, Index
 import pandas
 from scipy.sparse import spmatrix
 import torch
-from torch.nn import Module
 from torch import Tensor
 from torch.utils.data import DataLoader, TensorDataset, Subset
 from torch.nn.functional import (
     cross_entropy, mse_loss,
     binary_cross_entropy_with_logits
 )
-from sklearn.model_selection import BaseCrossValidator
+from sklearn.model_selection import BaseCrossValidator, LeaveOneOut
 from sklearn.preprocessing import (
     LabelBinarizer, LabelEncoder, StandardScaler,
     OrdinalEncoder, MinMaxScaler, MaxAbsScaler
 )
+from src.utility.nn.lineal import LinealNN
 from src.utility.nn.cvdataset import CrossvalidationDataset
 
 
@@ -50,16 +52,21 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
     targets_size: int
     features_size: int
     crossvalidation_mode: bool
+    original_size: int
     augment_size: int | None
-    train_indexes: list[int] | None
-    test_indexes: list[int] | None
-    augment_tensor: Tensor | None
+    size: int
+    train_indices: list[int] | None
+    test_indices: list[int] | None
+    crossvalidator: BaseCrossValidator
 
     def __init__(
         self, dataframe: DataFrame,
         labels: dict[str, Index],
-        data_augment: int = 0
+        crossvalidator: BaseCrossValidator,
+        data_augment: int = 0,
+        **kwargs
     ):
+        self.crossvalidator = crossvalidator
         self.train_dataframe = None
         self.test_dataframe = None
         self.train_size = None
@@ -79,10 +86,11 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
         self.ma_scalers = {}
         self.ma_scaled = {}
         self.dataframe = dataframe
+        self.original_size = len(dataframe)
         self.labels = labels
         self.labels['features'] = Index([
-            *self.labels['ordinal features'], *
-            self.labels['categorical features'],
+            *self.labels['ordinal features'],
+            *self.labels['categorical features'],
             *self.labels['sparsed features'], *self.labels['offset features'],
             *self.labels['normal features'], *self.labels['regular features']
         ])
@@ -92,16 +100,47 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
         self.labels['all'] = Index([
             *self.labels['targets'], *self.labels['features']
         ])
-        self.generate_features_tensors()
-        self.generate_targets_tensors()
-        self.generate_dataset()
-        self.generate_tensors()
-        self.data_augment(data_augment)
+        self.__generate_features_tensors()
+        self.__generate_targets_tensors()
+        seed = None
+        if 'seed' in kwargs:
+            seed = kwargs['seed']
+        self.data_augment(data_augment, seed)
+        self.test_indices = None
+        self.train_indices = None
+        if (
+            'test_indices' in kwargs
+            and kwargs['test_indices'] is not None
+        ):
+            self.set_test_indexes(kwargs['test_indices'])
+        if (
+            'train_indices' in kwargs
+            and kwargs['train_indices'] is not None
+        ):
+            self.set_train_indexes(kwargs['train_indices'])
 
-    def generate_features_tensors(self):
+    def generator_dict(self):
         """
         A
         """
+        generator = {}
+        generator['test_indices'] = self.test_indices
+        generator['train_indices'] = self.train_indices
+        generator['labels'] = self.labels
+        generator['dataframe'] = self.dataframe
+        generator['seed'] = self.seed
+        generator['data_augment'] = self.augment_size
+        generator['crossvalidator'] = self.crossvalidator
+        return generator
+
+    @classmethod
+    def from_generator_dict(cls, generator: dict):
+        """
+        A
+        """
+        return cls(**generator)
+
+    def __generate_features_tensors(self):
         for label in self.labels['sparsed features']:
             self.ma_scalers[label] = MaxAbsScaler()
             self.ma_scaled[label] = self.ma_scalers[label].fit_transform(
@@ -179,10 +218,7 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
                 self.tensors[label].size(dim=0), -1
             )
 
-    def generate_targets_tensors(self):
-        """
-        A
-        """
+    def __generate_targets_tensors(self):
         for label in self.labels['class targets']:
             self.binarizers[label] = LabelBinarizer()
             self.binarized[label] = self.binarizers[label].fit_transform(
@@ -216,31 +252,45 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
                 self.tensors[label].size(dim=0), -1
             )
 
-    def generate_dataset(self):
-        """
-        A
-        """
-        self.targets_tensor = torch.concat([
-            self.tensors[label]
-            for label in self.labels['targets']
-        ], dim=1)
+    def __generate_dataset(self):
+        self.size = self.original_size + (
+            self.augment_size
+            if self.augment_size is not None
+            else 0
+        )
+        self.targets_tensor = torch.concat(
+            [
+                torch.zeros((self.size, 0)),
+                *(
+                    self.tensors[label]
+                    for label in self.labels['targets']
+                )
+            ],
+            dim=1
+        )
         self.targets_size = self.targets_tensor.size(dim=1)
-        self.features_tensor = torch.concat([
-            self.tensors[label]
-            for label in self.labels['features']
-        ], dim=1)
+        self.features_tensor = torch.concat(
+            [
+                torch.zeros((self.size, 0)),
+                *(
+                    self.tensors[label]
+                    for label in self.labels['features']
+                )
+            ],
+            dim=1
+        )
         self.features_size = self.features_tensor.size(dim=1)
         self.dataset = TensorDataset(self.features_tensor, self.targets_tensor)
 
-    def generate_tensors(self):
-        """
-        A
-        """
+    def __generate_tensors(self):
         self.features = DataFrame(
             torch.concat(
                 [
-                    self.tensors[label]
-                    for label in self.labels['features']
+                    torch.zeros((self.size, 0)),
+                    *(
+                        self.tensors[label]
+                        for label in self.labels['features']
+                    )
                 ],
                 dim=1
             ).cpu().detach().numpy(),
@@ -250,8 +300,11 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
             self.regression_targets = DataFrame(
                 torch.concat(
                     [
-                        self.tensors[label]
-                        for label in self.labels['regression targets']
+                        torch.zeros((self.size, 0)),
+                        *(
+                            self.tensors[label]
+                            for label in self.labels['regression targets']
+                        )
                     ],
                     dim=1
                 ).cpu().detach().numpy(),
@@ -263,8 +316,11 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
             self.class_targets = DataFrame(
                 torch.concat(
                     [
-                        self.tensors[label]
-                        for label in self.labels['class targets']
+                        torch.zeros((self.size, 0)),
+                        *(
+                            self.tensors[label]
+                            for label in self.labels['class targets']
+                        )
                     ],
                     dim=1
                 ).cpu().detach().numpy(),
@@ -319,13 +375,45 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
         Parte un tensor de acuerdo a las etiquetas de cada caracteristica
         """
         return dict(zip(
-            self.labels['targets'],
+            self.labels['features'],
             features.split_with_sizes(
                 [
                     self.tensors[label].size(dim=1)
                     for label in self.labels['features']
                 ],
                 dim=1
+            )
+        ))
+
+    def split_feat_array(self, features: ndarray):
+        """
+        Parte un tensor de acuerdo a las etiquetas de cada caracteristica
+        """
+        return dict(zip(
+            self.labels['features'],
+            numpy.array_split(
+                features,
+                numpy.array([
+                    self.tensors[label].size(dim=1)
+                    for label in self.labels['features']
+                ]).cumsum(),
+                axis=1
+            )
+        ))
+
+    def split_pred_array(self, pred: ndarray):
+        """
+        Parte un tensor de acuerdo a las etiquetas de cada caracteristica
+        """
+        return dict(zip(
+            self.labels['targets'],
+            numpy.array_split(
+                pred,
+                numpy.array([
+                    self.tensors[label].size(dim=1)
+                    for label in self.labels['targets']
+                ]).cumsum(),
+                axis=1
             )
         ))
 
@@ -369,128 +457,89 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
             return self.ma_scalers[label].inverse_transform(pred).squeeze()
         return pred.squeeze()
 
-    def decode(self, pred: Tensor) -> DataFrame:
+    def decode(self, pred: ndarray) -> DataFrame:
         """
         Decodifica tensores a dataframes
         """
         return DataFrame({
             label: self.label_decode(label, data)
-            for label_list, tensor_list in [tuple(
-                zip(*self.split_pred_tensor(pred).items())
+            for label_list, array_list in [(
+                *zip(*self.split_pred_array(pred).items()),
             )]
-            for label, data in zip(
-                label_list,
-                (tensor.cpu().detach().numpy() for tensor in tensor_list)
-            )
+            for label, data in zip(label_list, array_list)
         })
 
-    def split(self, crossvalidator: BaseCrossValidator):
+    def split(self):
         """
         Implementacion de la particion de los conjuntos de
         entrenamiento y prueba en la validacion cruzada
         """
         if (
             self.crossvalidation_mode
-            or self.train_indexes is None
-            or self.test_indexes is None
+            or self.train_indices is None
+            or self.test_indices is None
         ):
-            yield from ((
-                        Subset(self, train_index.tolist()),
-                        Subset(self, test_index.tolist())
-                        ) for train_index, test_index in crossvalidator.split(
-                X=self.dataframe[self.labels['features']].to_numpy(),
-                y=self.dataframe[
-                    self.labels['class targets'][0]
-                ].to_numpy().ravel()
-            )
+            yield from (
+                (
+                    Subset(self, train_index.tolist()),
+                    Subset(self, test_index.tolist())
+                )
+                for train_index, test_index in self.crossvalidator.split(
+                    X=self.dataframe[self.labels['features']].to_numpy(),
+                    y=self.dataframe[
+                        self.labels['class targets'][0]
+                    ].to_numpy().ravel()
+                )
             )
         else:
             yield (
                 Subset(self, numpy.random.permutation(
-                    self.train_indexes
+                    self.train_indices
                 ).tolist()),
                 Subset(self, numpy.random.permutation(
-                    self.test_indexes
+                    self.test_indices
                 ).tolist())
             )
 
-    def calculate_probabilities(self, pred: dict[str, Tensor]):
-        """
-        A
-        """
-        return {
-            label: (
-                tensor if label not in self.labels['class targets']
-                else tensor.sigmoid() if tensor.size(dim=1) < 2
-                else tensor.softmax(dim=1)
-            )
-            for label, tensor in pred.items()
-        }
-
-    def prediction(self, model: Module, dataloader: DataLoader | None = None):
+    def prediction(self, model: LinealNN, indices: list[int] | None = None):
         """
         A
         """
         with torch.inference_mode():
-            if dataloader is None:
-                dataloader = DataLoader(dataset=self, batch_size=len(self))
-            targets, predictions = (
-                torch.vstack(tensors)
-                for tensors in zip(*(
-                    (y, model(X)) for X, y in dataloader
-                ))
-            )
-        targets = self.split_pred_tensor(targets)
-        predictions = self.calculate_probabilities(
-            self.split_pred_tensor(predictions)
-        )
+            if indices is not None:
+                dataset = Subset(self, indices)
+            else:
+                dataset = self
+            dataloader = DataLoader(dataset=dataset, batch_size=len(dataset))
+            targets_arr, predictions_arr, = zip(*(
+                (prediction, target)
+                for prediction, target in (
+                    (model.inference(X), y.cpu().detach().numpy())
+                    for X, y in dataloader
+                )
+            ))
+        targets = self.split_pred_array(numpy.vstack(targets_arr))
+        predictions = self.split_pred_array(numpy.vstack(predictions_arr))
         results = {}
         for label in self.labels['regression targets']:
             results[label] = (
-                targets[label].cpu().detach().numpy(),
-                predictions[label].cpu().detach().numpy()
+                targets[label],
+                predictions[label]
             )
         for label in self.labels['class targets']:
             results[label] = (
-                targets[label].cpu().detach().numpy(),
-                predictions[label].cpu().detach().numpy(),
-                self.label_decode(
-                    label, targets[label].cpu().detach().numpy()),
-                self.label_decode(
-                    label, predictions[label].cpu().detach().numpy())
+                targets[label],
+                predictions[label],
+                self.label_decode(label, targets[label]),
+                self.label_decode(label, predictions[label])
             )
         return results
-
-    def loss_fn(self, pred: Tensor, target: Tensor) -> Tensor:
-        """
-        Function de perdida general para los tensores, considerando
-        casos de clases y regresion
-        """
-        target_splitted = self.split_pred_tensor(target)
-        pred_splitted = self.split_pred_tensor(pred)
-        loss = torch.tensor(0, dtype=torch.double)
-        zip_list = [
-            *zip(pred_splitted.items(), target_splitted.values())
-        ]
-        for (label, pred), target in zip_list:
-            if label in self.labels['regression targets']:
-                loss += mse_loss(pred, target, reduction='mean')
-            elif pred.size(dim=1) > 1:
-                loss += cross_entropy(
-                    pred, target, reduction='mean',
-                    weight=self.class_weights[label]
-                )
-            else:
-                loss += binary_cross_entropy_with_logits(
-                    pred, target, reduction='mean',
-                    pos_weight=self.class_weights[label]
-                )
-        return loss / len(zip_list)
 
     @classmethod
     def from_dataframes(
         cls, labels: dict[str, Index],
         train: DataFrame, test: DataFrame,
+        crossvalidator: BaseCrossValidator | None = None,
         data_augment: int = 0
     ):
         dataframe = pandas.concat(
@@ -498,19 +547,31 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
             axis='index',
             ignore_index=True
         )
-        dataset = cls(dataframe, labels, data_augment)
-        dataset.set_indexes(range(len(train)), False)
-        dataset.set_indexes(range(len(train), len(train) + len(test)), True)
+        if crossvalidator is None:
+            crossvalidator = LeaveOneOut()
+        dataset = cls(dataframe, labels, crossvalidator, data_augment)
+        dataset.set_train_indexes(range(len(train)))
         dataset.crossvalidation_mode = False
 
-    def set_indexes(self, indexes: Iterable[int], is_test: bool = True):
+    def set_train_indexes(self, indexes: Iterable[int]):
         """
         A
         """
-        if is_test:
-            self.test_indexes = list(indexes)
-        else:
-            self.train_indexes = list(indexes)
+        self.train_indices = list(indexes)
+        self.test_indices = [
+            idx for idx in range(len(self))
+            if idx not in self.train_indices
+        ]
+
+    def set_test_indexes(self, indexes: Iterable[int]):
+        """
+        A
+        """
+        self.test_indices = list(indexes)
+        self.train_indices = [
+            idx for idx in range(len(self))
+            if idx not in self.test_indices
+        ]
 
     def to_dataframe(
         self, subset: str | Iterable[int] | None = None,
@@ -537,18 +598,18 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
                             label
                         ].cpu().detach().numpy()
                     case 'train':
-                        if self.train_indexes is not None:
+                        if self.train_indices is not None:
                             data[label] = self.tensors[label][
-                                self.train_indexes
+                                self.train_indices
                             ].cpu().detach().numpy()
                         else:
                             data[label] = self.tensors[
                                 label
                             ].cpu().detach().numpy()
                     case 'test':
-                        if self.test_indexes is not None:
+                        if self.test_indices is not None:
                             data[label] = self.tensors[label][
-                                self.test_indexes
+                                self.test_indices
                             ].cpu().detach().numpy()
                         else:
                             data[label] = self.tensors[
@@ -581,8 +642,177 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
             dataframe = DataFrame(dataframe_dict)
         return dataframe
 
-    def data_augment(self, data_augment: int = 0):
+    def data_augment(self, data_augment: int = 0, seed: int | None = None):
         """
         A
         """
+        ss = SeedSequence()
+        if seed is not None:
+            ss = SeedSequence(entropy=seed)
+        self.seed = ss.entropy
+        num_gen = numpyrand.default_rng(seed=PCG64(seed=ss))
+        tor_gen = torch.Generator(device=torch.get_default_device())
+        tor_gen.manual_seed(
+            num_gen.integers(
+                0, 0xffff_ffff_ffff_ffff  # type: ignore
+            )
+        )
         self.augment_size = data_augment
+        added_tensor = {
+            label: []
+            for label in (*self.labels['features'], * self.labels['targets'])
+        }
+        for sample in num_gen.integers(
+            low=0, high=self.original_size, size=data_augment
+        ).tolist():
+            for label in self.labels['ordinal features']:
+                tensor = self.tensors[label][sample, :]
+                added_tensor[label] += [(
+                    tensor - 0.5
+                    + torch.rand(
+                        tensor.size(),
+                        layout=tensor.layout,
+                        dtype=tensor.dtype,
+                        device=tensor.device,
+                        generator=tor_gen
+                    )
+                )]
+            for label in self.labels['categorical features']:
+                if tensor.size(dim=1) == 1:
+                    tensor = self.tensors[label][sample, :]
+                    added_tensor[label] += [(
+                        0.5 * torch.rand(
+                            tensor.size(),
+                            layout=tensor.layout,
+                            dtype=tensor.dtype,
+                            device=tensor.device,
+                            generator=tor_gen
+                        )
+                        + 0.5 * (tensor > 0.5).double()
+                    )]
+                else:
+                    tensor = self.tensors[label][sample, :]
+                    added_tensor[label] += [((
+                        tensor + torch.randn(
+                            tensor.size(),
+                            layout=tensor.layout,
+                            dtype=tensor.dtype,
+                            device=tensor.device,
+                            generator=tor_gen
+                        ).softmax(dim=1)
+                    ).softmax(dim=1))]
+            for label in self.labels['normal features']:
+                tensor = self.tensors[label][sample, :]
+                added_tensor[label] += [(
+                    tensor + torch.rand(
+                            tensor.size(),
+                            layout=tensor.layout,
+                            dtype=tensor.dtype,
+                            device=tensor.device,
+                            generator=tor_gen
+                    ) / 10 * torch.tensor(self.std_scalers[label].var_)
+                )]
+            for label in self.labels['regular features']:
+                added_tensor[label] += [self.tensors[label][sample, :]]
+            for label in self.labels['sparsed features']:
+                tensor = self.tensors[label][sample, :]
+                added_tensor[label] += [(
+                    tensor + (tensor == 0).double()
+                    * torch.rand(
+                        tensor.size(),
+                        layout=tensor.layout,
+                        dtype=tensor.dtype,
+                        device=tensor.device,
+                        generator=tor_gen
+                    ) / 100 * torch.tensor(self.ma_scalers[label].scale_)
+                )]
+            for label in self.labels['offset features']:
+                tensor = self.tensors[label][sample, :]
+                added_tensor[label] += [(
+                    tensor + torch.rand(
+                        tensor.size(),
+                        layout=tensor.layout,
+                        dtype=tensor.dtype,
+                        device=tensor.device,
+                        generator=tor_gen
+                    ) / 100 * torch.tensor(self.mm_scalers[label].scale_)
+                )]
+            for label in self.labels['regression targets']:
+                added_tensor[label] += [self.tensors[label][sample, :]]
+            for label in self.labels['class targets']:
+                if tensor.size(dim=1) == 1:
+                    tensor = self.tensors[label][sample, :]
+                    added_tensor[label] += [(
+                        0.5 * torch.rand(
+                            tensor.size(),
+                            layout=tensor.layout,
+                            dtype=tensor.dtype,
+                            device=tensor.device,
+                            generator=tor_gen
+                        ) + 0.5 * (tensor > 0.5).double()
+                    )]
+                else:
+                    tensor = self.tensors[label][sample, :]
+                    added_tensor[label] += [((
+                        tensor + torch.randn(
+                            tensor.size(),
+                            layout=tensor.layout,
+                            dtype=tensor.dtype,
+                            device=tensor.device,
+                            generator=tor_gen
+                        ).softmax(dim=1)
+                    ).softmax(dim=1))]
+        for label in (*self.labels['features'], * self.labels['targets']):
+            self.tensors[label] = torch.concat(
+                (
+                    self.tensors[label][:self.original_size, :],
+                    *added_tensor[label]
+                ),
+                dim=0
+            )
+        self.__generate_dataset()
+        self.__generate_tensors()
+
+    def inference_function(self, pred: Tensor) -> Tensor:
+        """
+        Function de perdida general para los tensores, considerando
+        casos de clases y regresion
+        """
+        return torch.concat(
+            [
+                pred
+                if label in self.labels['regression targets']
+                else pred.sigmoid()
+                if pred.size(dim=1) == 1
+                else pred.softmax(dim=1)
+                for label, pred in self.split_pred_tensor(pred).items()
+            ],
+            dim=1
+        )
+
+    def loss_fn(self, pred: Tensor, target: Tensor) -> Tensor:
+        """
+        Function de perdida general para los tensores, considerando
+        casos de clases y regresion
+        """
+        target_splitted = self.split_pred_tensor(target)
+        pred_splitted = self.split_pred_tensor(pred)
+        loss = torch.tensor(0.0, dtype=torch.double)
+        for label in self.labels['regression targets']:
+            target = target_splitted[label]
+            pred = pred_splitted[label]
+            loss += mse_loss(pred, target, reduction='mean')
+        for label in self.labels['class targets']:
+            target = target_splitted[label]
+            pred = pred_splitted[label]
+            if pred.size(dim=1) > 1:
+                loss += cross_entropy(
+                    pred, target, reduction='mean',
+                    weight=self.class_weights[label]
+                )
+            else:
+                loss += binary_cross_entropy_with_logits(
+                    pred, target, reduction='mean',
+                    pos_weight=self.class_weights[label]
+                )
+        return loss / len(self.labels['targets'])
