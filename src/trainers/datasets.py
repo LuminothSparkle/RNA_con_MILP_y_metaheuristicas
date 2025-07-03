@@ -1,12 +1,16 @@
 """
 Modulo que contiene las clases de los datasets utilizados
 """
-
 import re
 from pathlib import Path
 from pandas import Index, read_csv
+from sklearn.model_selection import BaseCrossValidator
+import torch
 from ucimlrepo import fetch_ucirepo, dotdict
-from src.utility.nn.cvtensords import CrossvalidationTensorDataset
+from src.utility.nn.cvtensords import (
+    CrossvalidationTensorDataset, CrossvalidationDataset
+)
+from src.utility.nn.cvdataset import crossvalidate
 
 
 class BCWDataset(CrossvalidationTensorDataset):
@@ -16,13 +20,16 @@ class BCWDataset(CrossvalidationTensorDataset):
     uci_dataset: dotdict
 
     def __init__(
-        self, cv_data: dict | None = None,
-        BCW_file_path: Path | None = None
+        self, crossvalidator: BaseCrossValidator,
+        BCW_file_path: Path | None = None,
+        labels: dict[str, list[str]] | None = None,
+        **kwargs
     ) -> None:
-        if cv_data is None:
-            cv_data = {'labels': {}, 'data augment': 0}
+        kwargs['crossvalidator'] = crossvalidator
+        if labels is None:
+            labels = {}
         if BCW_file_path is not None:
-            labels = Index([
+            labels_list = Index([
                 'ID',
                 *[
                     f'{s}{idx}' for idx in range(1, 4)
@@ -34,27 +41,26 @@ class BCWDataset(CrossvalidationTensorDataset):
                 ],
                 'Diagnosis'
             ])
-            dataframe = read_csv(
-                BCW_file_path, header=None, index_col=0, names=labels.to_list()
+            kwargs['dataframe'] = read_csv(
+                BCW_file_path, header=None, index_col=0,
+                names=labels_list.to_list()
             )
         else:
             self.uci_dataset = fetch_ucirepo(id=17)
-            dataframe = self.uci_dataset.data.original  # type: ignore
-            labels = dataframe.columns
-        labels_dict = {}
-        for label_type, re_labels in cv_data['labels'].items():
-            labels_dict[label_type] = [
-                label for label in labels
+            kwargs['dataframe'] = (
+                self.uci_dataset.data.original  # type: ignore
+            )
+            labels_list = kwargs['dataframe'].columns
+        kwargs['labels'] = {}
+        for label_type, re_labels in labels.items():
+            kwargs['labels'][label_type] = [
+                label for label in labels_list
                 if any(
                     re.match(pattern=re_label, string=label)
                     for re_label in re_labels
                 )
             ]
-        super().__init__(
-            dataframe=dataframe,
-            labels=labels_dict,
-            data_augment=cv_data['data augment']
-        )
+        super().__init__(**kwargs)
 
 
 class KardexDataset(CrossvalidationTensorDataset):
@@ -64,26 +70,46 @@ class KardexDataset(CrossvalidationTensorDataset):
 
     def __init__(
         self, kardex_csv_path: Path,
-        cv_data: dict | None = None
+        crossvalidator: BaseCrossValidator,
+        labels: dict[str, list[str]] | None = None,
+        **kwargs
     ) -> None:
-        dataframe = read_csv(
+        if labels is None:
+            labels = {}
+        kwargs['dataframe'] = read_csv(
             filepath_or_buffer=Path(kardex_csv_path),
             header=0, index_col=0
         )
-        if cv_data is None:
-            cv_data = {'labels': {}, 'data augment': 0}
-        labels = dataframe.columns
-        labels_dict = {}
-        for label_type, re_labels in cv_data['labels'].items():
-            labels_dict[label_type] = [
-                label for label in labels
+        labels_list = kwargs['dataframe'].columns
+        kwargs['crossvalidator'] = crossvalidator
+        kwargs['labels'] = {}
+        for label_type, re_labels in labels.items():
+            kwargs['labels'][label_type] = [
+                label for label in labels_list
                 if any(
                     re.match(pattern=re_label, string=label)
                     for re_label in re_labels
                 )
             ]
-        super().__init__(
-            dataframe=dataframe,
-            labels=labels_dict,
-            data_augment=cv_data['data augment']
-        )
+        super().__init__(**kwargs)
+
+
+def test_arch(
+    dataset: CrossvalidationDataset, iterations: int,
+    train_batches: int,
+    **kwargs
+):
+    """
+    A
+    """
+    torch.set_default_device('cpu')
+    torch.set_default_dtype(torch.double)
+    if torch.cuda.is_available():
+        torch.set_default_device('cuda')
+        torch.set_default_dtype(torch.double)
+    return crossvalidate(
+        dataset=dataset,
+        iterations=iterations,
+        train_batches=train_batches,
+        **kwargs
+    )

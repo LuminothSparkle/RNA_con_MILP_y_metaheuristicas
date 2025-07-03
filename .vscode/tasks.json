@@ -42,40 +42,19 @@
             }
         },
         {
-            "label": "Generate BCW Gurobi Files",
-            "command": "python",
-            "args": [
-                "${workspaceFolder}/src/gurobi/interface.py",
-                "-sp",
-                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results",
-                "-lp",
-                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results",
-                "-cn",
-                "bcw_best",
-            ],
-            "type": "shell",
-            "group": {
-                "kind": "build",
-            },
-            "presentation": {
-                "reveal": "always",
-                "panel": "new",
-                "focus": true
-            }
-        },
-        {
             "label": "Regenerate neural networks for Kardex",
             "command": "python",
             "args": [
                 "${workspaceFolder}/src/trainers/kardex.py",
-                "-sp",
+                "--gen_data",
+                "--save_path",
                 "${workspaceFolder}/Data/kardex",
-                "-lp",
+                "--load_path",
                 "${workspaceFolder}/Data/kardex",
-                "-ap",
-                "${workspaceFolder}/Data/kardex/crossvalidation/arch_1.json",
-                "-cp",
-                "${workspaceFolder}/Data/kardex/crossvalidation/cv_1.json",
+                "--arch_path",
+                "${workspaceFolder}/Data/kardex/crossvalidation/arch_fast.json",
+                "--cv_path",
+                "${workspaceFolder}/Data/kardex/crossvalidation/cv_fast.json",
             ],
             "type": "shell",
             "group": {
@@ -92,15 +71,15 @@
             "command": "python",
             "args": [
                 "${workspaceFolder}/src/trainers/bcw.py",
-                "-sp",
+                "--gen_data",
+                "--save_path",
                 "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)",
-                "-lp",
+                "--load_path",
                 "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)",
-                "-ap",
-                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/crossvalidation/arch_1.json",
-                "-cp",
-                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/crossvalidation/cv_1.json",
-                "-gd",
+                "--arch_path",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/crossvalidation/arch_fast.json",
+                "--cv_path",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/crossvalidation/cv_fast.json",
             ],
             "type": "shell",
             "group": {
@@ -113,16 +92,20 @@
             }
         },
         {
-            "label": "Regenerate features minibatch for Breast Cancer",
+            "label": "Regenerate minibatches for Breast Cancer",
             "command": "python",
             "args": [
                 "${workspaceFolder}/src/gurobi/batchgen.py",
-                "-sp",
+                "--save_path",
                 "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/gurobi",
-                "-lf",
-                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/dataframes/model_best/bcw_train_ftr.csv",
-                "-bs",
-                "100",
+                "--load_path",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/dataframes",
+                "--batch_size",
+                "10",
+                "--load_name",
+                "bcw",
+                "--case_index",
+                "best"
             ],
             "type": "shell",
             "group": {
@@ -135,16 +118,43 @@
             }
         },
         {
-            "label": "Regenerate class targets minibatch for Breast Cancer",
+            "label": "Generate BCW Gurobi Model",
             "command": "python",
             "args": [
-                "${workspaceFolder}/src/gurobi/batchgen.py",
-                "-sp",
+                "${workspaceFolder}/src/gurobi/model.py",
+                "--gen_model",
+                "--save_path",
                 "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/gurobi",
-                "-lf",
-                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/dataframes/model_best/bcw_train_cls_tgt.csv",
-                "-bs",
-                "100",
+                "--load_path",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results",
+                "--load_name",
+                "bcw",
+                "--case_index",
+                "best",
+            ],
+            "type": "shell",
+            "group": {
+                "kind": "build",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true
+            }
+        },
+        {
+            "label": "Generate BCW Gurobi Files",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/gurobi/model.py",
+                "--save_path",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/gurobi",
+                "--load_path",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/models",
+                "--load_name",
+                "bcw",
+                "--case_index",
+                "best",
             ],
             "type": "shell",
             "group": {

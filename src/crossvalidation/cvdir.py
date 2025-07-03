@@ -5,19 +5,22 @@ import argparse
 from argparse import ArgumentParser
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from matplotlib import pyplot
 from pandas import DataFrame
-import matplotlib.pyplot as pyplot
 import numpy
-from src.utility.io.cv import (
-    save_log, save_dataset, save_boxplot_figure,
+from torch.utils.data import Subset
+from src.utility.io.crossvalidation import (
+    save_log, save_boxplot_figure,
     save_class_target_metrics, save_confusion_matrix_figure,
-    save_prediction_error_figure, save_python_cv,
+    save_prediction_error_figure,
     save_regression_target_metrics,
     save_model_dataframe, save_metrics_dataframe,
-    load_cv_json, load_python_cv
+    load_crossvalidation
 )
+from src.utility.io.dataset import save_dataset_csv, save_pytorch_dataset
 from src.utility.io.model import save_model
 from src.utility.nn.lineal import LinealNN
+from src.utility.nn.cvtensords import CrossvalidationTensorDataset
 
 
 def safe_suffix(name: str, suffix: str):
@@ -29,56 +32,33 @@ def safe_suffix(name: str, suffix: str):
     return f'{name}{suffix}'
 
 
-def save_crossvalidation(
-    dir_path: Path, cv_data: dict,
-    name: str = '', exists_ok: bool = True
-):
-    """
-    A
-    """
-    pkl_path = dir_path / f'{safe_suffix(name, "cv")}.pkl'
-    save_python_cv(pkl_path, cv_data, exists_ok=exists_ok)
-
-
-def load_crossvalidation(
-    dir_path: Path,
-    name: str = '',
-    not_exists_ok: bool = True
-):
-    """
-    A
-    """
-    try:
-        json_path = dir_path / f'{name}.json'
-        data = load_cv_json(json_path, not_exists_ok=not_exists_ok)
-        assert isinstance(data, dict)
-    except AssertionError as ae:
-        print(ae)
-        data = None
-    try:
-        pkl_path = dir_path / f'{safe_suffix(name, "cv")}.pkl'
-        data = load_python_cv(pkl_path, not_exists_ok=not_exists_ok)
-        assert isinstance(data, dict)
-    except AssertionError as ae:
-        print(ae)
-        data = None
-    assert not_exists_ok or data is not None
-    return data
-
-
 def generate_cv_data(
-    dir_path: Path, cv_data: dict,
-    name: str = '', exists_ok: bool = True
+    dir_path: Path,
+    models: list[LinealNN],
+    dataset_generators: list,
+    models_test_indices: list[list[int]],
+    models_train_indices: list[list[int]],
+    models_loss: list,
+    models_train_time: list,
+    models_parameters: list,
+    name: str = '',
+    exists_ok: bool = True,
+    **kwargs
 ):
     """
     A
     """
+    _ = kwargs  # type: ignore
+    pyplot.switch_backend('agg')
     class_data, regression_data = {}, {}
     model_predictions = []
-    for model, dataset, test_dataloader in zip(
-        cv_data['model'], cv_data['dataset'], cv_data['test dataloader']
+    datasets = []
+    for model, generator, test_indices in zip(
+        models, dataset_generators, models_test_indices
     ):
-        predictions = dataset.prediction(model, test_dataloader)
+        dataset = CrossvalidationTensorDataset.from_generator_dict(generator)
+        datasets += [dataset]
+        predictions = dataset.prediction(model, test_indices)
         model_predictions += [predictions]
         for label in dataset.labels['class targets']:
             if label not in class_data:
@@ -91,32 +71,59 @@ def generate_cv_data(
     with ThreadPoolExecutor(max_workers=10) as executor:
         futures_list = []
         models_path = dir_path / 'models'
-        models_path.mkdir(parents=True, exist_ok=True)
         futures_list += [executor.submit(
             save_models,
-            models=cv_data['model'],
+            models=models,
             dir_path=models_path,
             name=name,
             exists_ok=exists_ok
         )]
         dataframes_path = dir_path / 'dataframes'
-        dataframes_path.mkdir(parents=True, exist_ok=True)
-        for i, dataset, train_indexes, test_indexes in zip(
-            [*range(len(cv_data['dataset'])), 'best', 'worst'],
-            [*cv_data['dataset'], cv_data['dataset'][0], cv_data['dataset'][-1]],
+        dataset_path = dir_path / 'datasets'
+        for i, dataset, train_indices, test_indices in zip(
+            [*range(len(datasets)), 'best', 'worst'],
             [
-                *cv_data['train index'],
-                cv_data['train index'][0],
-                cv_data['train index'][-1]
+                *datasets,
+                datasets[0],
+                datasets[-1]
             ],
             [
-                *cv_data['test index'],
-                cv_data['test index'][0],
-                cv_data['test index'][-1]
+                *models_train_indices,
+                models_train_indices[0],
+                models_train_indices[-1]
+            ],
+            [
+                *models_test_indices,
+                models_test_indices[0],
+                models_test_indices[-1]
             ]
         ):
             model_path = dataframes_path / f'model_{i}'
+            test_dataset_path = dataset_path / 'test_pt'
+            train_dataset_path = dataset_path / 'train_pt'
+            train_path = model_path / 'train_csv'
+            test_path = model_path / 'test_csv'
             model_path.mkdir(parents=True, exist_ok=True)
+            train_path.mkdir(parents=True, exist_ok=True)
+            test_path.mkdir(parents=True, exist_ok=True)
+            train_dataset_path.mkdir(parents=True, exist_ok=True)
+            test_dataset_path.mkdir(parents=True, exist_ok=True)
+            futures_list += [executor.submit(
+                save_pytorch_dataset,
+                dataset=Subset(dataset, train_indices),
+                file_path=train_dataset_path / (
+                    f'{safe_suffix(name, f"{i}")}.pt'
+                ),
+                exists_ok=exists_ok
+            )]
+            futures_list += [executor.submit(
+                save_pytorch_dataset,
+                dataset=Subset(dataset, test_indices),
+                file_path=test_dataset_path / (
+                    f'{safe_suffix(name, f"{i}")}.pt'
+                ),
+                exists_ok=exists_ok
+            )]
             for label_type, suffix in [
                 ('all', 'raw'),
                 ('class targets', 'cls_tgt'),
@@ -124,33 +131,33 @@ def generate_cv_data(
                 ('features', 'ftr')
             ]:
                 futures_list += [executor.submit(
-                    save_dataset,
+                    save_dataset_csv,
                     dataset=dataset,
-                    file_path=model_path / (
-                        f'{safe_suffix(name, 'train')}_{suffix}.csv'
+                    file_path=train_path / (
+                        f'{safe_suffix(name, suffix)}.csv'
                     ),
-                    subset=train_indexes,
+                    subset=train_indices,
                     label_type=label_type,
                     raw=True,
                     exists_ok=exists_ok
                 )]
                 futures_list += [executor.submit(
-                    save_dataset,
+                    save_dataset_csv,
                     dataset=dataset,
-                    file_path=model_path / (
-                        f'{safe_suffix(name, 'test')}_{suffix}.csv'
+                    file_path=test_path / (
+                        f'{safe_suffix(name, suffix)}.csv'
                     ),
-                    subset=test_indexes,
+                    subset=test_indices,
                     label_type=label_type,
                     raw=True,
                     exists_ok=exists_ok
                 )]
-        for name_type, i in {'best': 0, 'worst': -1}.items():
+        for name_type, i in [('best', 0), ('worst', -1)]:
             futures_list += [executor.submit(
                 save_displays,
                 model_predictions=model_predictions[i],
-                class_encoders=cv_data['dataset'][i].encoders,
-                class_targets=cv_data['dataset'][i].labels['class targets'],
+                class_encoders=datasets[i].encoders,
+                class_targets=datasets[i].labels['class targets'],
                 dir_path=dir_path / name_type,
                 name=name,
                 exists_ok=exists_ok
@@ -169,9 +176,9 @@ def generate_cv_data(
         futures_list += [executor.submit(
             save_dataframes,
             model_data={
-                'time lapsed': cv_data['train time'],
-                'loss': cv_data['loss'],
-                'parameters': cv_data['parameters']
+                'time lapsed': models_train_time,
+                'loss': models_loss,
+                'parameters': models_parameters
             },
             class_labels_data=class_labels_data,
             regression_labels_data=regression_labels_data,
@@ -183,7 +190,7 @@ def generate_cv_data(
             save_log,
             class_labels_data=class_labels_data,
             regression_labels_data=regression_labels_data,
-            total_nanoseconds=numpy.sum(cv_data['train time']),
+            total_nanoseconds=numpy.sum(models_train_time),
             log_path=dir_path / f'{name}.log',
             exists_ok=exists_ok
         )]
@@ -241,7 +248,7 @@ def save_displays(
     """
     dir_path.mkdir(parents=True, exist_ok=True)
     if extensions is None:
-        extensions = ['eps', 'png', 'pdf', 'svg', 'tiff', 'ps', 'raw']
+        extensions = ['pdf']
     formats = {
         None: '>d', 'all': '>2.3%',
         'true': '>2.3%', 'pred': '>2.3%'
@@ -255,7 +262,9 @@ def save_displays(
                 base_name = f'{safe_suffix(name, label)}_cm'
                 for norm, fmt in formats.items():
                     for extension in extensions:
-                        figure_path = dir_path / f'{base_name}_{norm}.{extension}'
+                        figure_path = (
+                            dir_path / f'{base_name}_{norm}.{extension}'
+                        )
                         futures_list += [executor.submit(
                             save_confusion_matrix_figure,
                             figure_path,
@@ -275,8 +284,7 @@ def save_displays(
                         exists_ok=exists_ok
                     )]
         for future_data in futures_list:
-            fig = future_data.result()
-            pyplot.close(fig)
+            future_data.result()
 
 
 def save_gen_metrics(
@@ -338,43 +346,44 @@ def save_boxplots(
     """
     dir_path.mkdir(parents=True, exist_ok=True)
     if extensions is None:
-        extensions = ['eps', 'png', 'pdf', 'svg', 'tiff', 'ps', 'raw']
+        extensions = ['pdf']
     if percentage_metrics is None:
         percentage_metrics = []
     with ThreadPoolExecutor(max_workers=10) as executor:
         futures_list = []
-        for metric in metrics.columns:
-            if metric not in percentage_metrics:
-                for extension in extensions:
-                    file_path = dir_path / (
-                        f'{safe_suffix(name, label)}_{metric}.{extension}'
-                    )
-                    futures_list += [executor.submit(
-                        save_boxplot_figure,
-                        file_path=file_path,
-                        target_label=label,
-                        values={metric: metrics[metric].to_numpy()},
-                        percentage=False,
-                        exists_ok=exists_ok
-                    )]
-            for extension in extensions:
-                file_path = dir_path / (
-                    f'{safe_suffix(name, label)}_percentages.{extension}'
-                )
-                futures_list += [executor.submit(
-                    save_boxplot_figure,
-                    file_path=file_path,
-                    target_label=label,
-                    values={
-                        metric: metrics[metric].to_numpy()
-                        for metric in percentage_metrics
-                    },
-                    percentage=True,
-                    exists_ok=exists_ok
-                )]
+        for extension in extensions:
+            val_path = dir_path / (
+                f'{safe_suffix(name, label)}_values.{extension}'
+            )
+            futures_list += [executor.submit(
+                save_boxplot_figure,
+                file_path=val_path,
+                target_label=label,
+                values={
+                    metric: metrics[metric].to_numpy()
+                    for metric in metrics.columns
+                    if metric not in percentage_metrics
+                },
+                percentage=False,
+                exists_ok=exists_ok
+            )]
+            per_path = dir_path / (
+                f'{safe_suffix(name, label)}_percentages.{extension}'
+            )
+            futures_list += [executor.submit(
+                save_boxplot_figure,
+                file_path=per_path,
+                target_label=label,
+                values={
+                    metric: metrics[metric].to_numpy()
+                    for metric in metrics.columns
+                    if metric in percentage_metrics
+                },
+                percentage=True,
+                exists_ok=exists_ok
+            )]
         for future_data in futures_list:
-            fig = future_data.result()
-            pyplot.close(fig)
+            future_data.result()
 
 
 def save_models(
@@ -390,39 +399,36 @@ def save_models(
         name (str, optional): _description_. Defaults to ''.
         exists_ok (bool, optional): _description_. Defaults to True.
     """
-    dir_path.mkdir(parents=True, exist_ok=True)
-    name_dict = {
-        safe_suffix(name, f'{i}'): models[i]
-        for i in range(len(models))
-    }
-    name_dict[safe_suffix(name, 'best')] = models[0]
-    name_dict[safe_suffix(name, 'worst')] = models[-1]
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        futures_list = []
-        for name, model in name_dict.items():
-            futures_list += [executor.submit(
-                save_model,
-                model,
-                dir_path,
-                name,
-                exists_ok
-            )]
-        for future_data in futures_list:
-            future_data.result()
+    models_list = [
+        *enumerate(models),
+        ('model_best', models[0]),
+        ('model_worst', models[-1])
+    ]
+    for idx, model in models_list:
+        model_path = dir_path / idx
+        model_path.mkdir(parents=True, exist_ok=True)
+        save_model(
+            model,
+            model_path,
+            name,
+            exists_ok
+        )
 
 
 def main(args: argparse.Namespace):
     """
     A
     """
-    data = load_crossvalidation(args.load_path, args.name, False)
-    if isinstance(data, dict):
-        generate_cv_data(
-            args.save_path,
-            data,
-            args.name,
-            not args.no_overwrite
-        )
+    data = load_crossvalidation(
+        args.load_file,
+        False
+    )
+    generate_cv_data(
+        dir_path=args.save_path,
+        name=args.save_name,
+        exists_ok=not args.no_overwrite,
+        **data
+    )
 
 
 if __name__ == '__main__':
@@ -433,11 +439,11 @@ if __name__ == '__main__':
         default=Path.cwd()
     )
     argparser.add_argument(
-        '--load_path', '-lp',
+        '--load_file', '-lf',
         default=Path.cwd()
     )
     argparser.add_argument(
-        '--name', '-lp',
+        '--save_name', '-sn',
         default=''
     )
     argparser.add_argument('--no_overwrite', '-no', action='store_true')

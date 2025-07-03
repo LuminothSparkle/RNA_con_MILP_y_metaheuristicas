@@ -45,6 +45,15 @@ nn_type_dict = {
 }
 
 
+def gen_from_tuple(
+    value: tuple[Any, list[Any], dict[str, Any]]
+):
+    """
+    A
+    """
+    return value[0](*value[1], **value[2])
+
+
 def analize_value_param(
     value: Any,
     type_dict: dict[str, Any] | None = None
@@ -54,14 +63,8 @@ def analize_value_param(
     """
     if type_dict is None:
         type_dict = {}
-    if isinstance(value, dict) and 'kwds' in value:
-        if value['name'] in type_dict:
-            return type_dict[value['name']], analize_value_param(
-                value['kwds'],
-                type_dict
-            )
-        else:
-            return value['name'], analize_value_param(value['kwds'], type_dict)
+    if isinstance(value, dict) and 'tuple' in value:
+        return tuple(analize_value_param(value['tuple'], type_dict))
     elif isinstance(value, list):
         return [analize_value_param(value, type_dict) for value in value]
     elif isinstance(value, dict):
@@ -89,7 +92,7 @@ def analize_layers_param(
             k: analize_value_param(value, type_dict)
             for k, value in enumerate(value)
         }
-    elif isinstance(value, dict) and 'kwds' not in value:
+    elif isinstance(value, dict) and 'tuple' not in value:
         return {
             int(k): analize_value_param(value, type_dict)
             for k, value in value.items()

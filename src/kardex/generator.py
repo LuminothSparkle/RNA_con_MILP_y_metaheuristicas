@@ -191,35 +191,12 @@ def main(args: argparse.Namespace):
     Funcion main para generar la base de datos en archivo csv del archivo
     json del kardex anonimizado
     """
-    load_path = Path(args.load_path)
-    save_path = Path(args.save_path)
-    plans_path = load_path / 'Plans'
-    kardex_path = load_path / 'kardex.json'
-    if not save_path.exists():
-        print(f'{save_path} doesn\'t exists')
-        return None
-    elif not save_path.is_dir():
-        print(f'Cannot access {save_path} or isn\'t a directory')
-        return None
-    if not load_path.exists():
-        print(f'{load_path} doesn\'t exists')
-        return None
-    elif not load_path.is_dir():
-        print(f'Cannot access {load_path} or isn\'t a directory')
-        return None
-    if not kardex_path.exists():
-        print(f'{kardex_path} doesn\'t exists')
-        return None
-    if not (plans_path).exists():
-        print(f'{plans_path} doesn\'t exists')
-        return None
-    elif (plans_path).is_dir():
-        print(f'{plans_path} isn\'t a directory')
-        return None
+    plans_path = args.load_path / 'Plans'
+    kardex_path = args.load_path / 'kardex.json'
     plans_paths = sorted(plans_path.glob('*.json'))
     career_dict = process_kardex(kardex_path, plans_paths)
-    save_path.mkdir(parents=True, exist_ok=True)
-    write_db(career_dict, save_path, not args.no_overwrite)
+    args.save_path.mkdir(parents=True, exist_ok=True)
+    write_db(career_dict, args.save_path, not args.no_overwrite)
 
 
 if __name__ == '__main__':
@@ -227,10 +204,12 @@ if __name__ == '__main__':
     argparser = ArgumentParser()
     argparser.add_argument(
         '--save_path', '-sp',
+        type=Path,
         default=Path.cwd() / 'Data' / 'kardex'
     )
     argparser.add_argument(
         '--load_path', '-lp',
+        type=Path,
         default=Path.cwd() / 'Data' / 'kardex'
     )
     argparser.add_argument('--no_overwrite', '-no', action='store_true')

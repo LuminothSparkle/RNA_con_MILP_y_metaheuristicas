@@ -20,10 +20,11 @@ def save_model(
         name (str, optional): _description_. Defaults to ''.
         exists_ok (bool, optional): _description_. Defaults to True.
     """
-    save_python_model(module, dir_path / f'{name}.pkl', exists_ok)
     save_torch_model(module, dir_path / f'{name}.pt', exists_ok)
+    save_torch_model_state(module, dir_path / f'{name}_state.pt', exists_ok)
     save_onnx_model(module, dir_path / f'{name}.onnx', exists_ok)
-    save_script_model(module, dir_path / f'{name}_script.pt', exists_ok)
+    save_train_onnx_model(module, dir_path / f'{name}_train.onnx', exists_ok)
+    save_traced_model(module, dir_path / f'{name}_traced.pt', exists_ok)
 
 
 def load_model(dir_path: Path, name: str = '', not_exists_ok: bool = True):
@@ -32,57 +33,25 @@ def load_model(dir_path: Path, name: str = '', not_exists_ok: bool = True):
     """
     model = None
     try:
-        model = load_python_model(dir_path / f'{name}.pkl', False)
-        assert isinstance(model, LinealNN)
-    except AssertionError as ae:
-        print(ae)
-    try:
         model = load_torch_model(dir_path / f'{name}.pt', False)
-        assert isinstance(model, LinealNN)
+        assert isinstance(model, LinealNN), (
+            f"No se leyo correctamente {name}.pt"
+        )
+        return model
     except AssertionError as ae:
         print(ae)
     try:
-        model = load_script_model(dir_path / f'{name}_script.pt', False)
-        assert isinstance(model, LinealNN)
+        model = load_torch_model_state(dir_path / f'{name}_state.pt', False)
+        assert isinstance(model, LinealNN), (
+            f"No se leyo correctamente {name}_state.pt"
+        )
+        return model
     except AssertionError as ae:
         print(ae)
     assert not_exists_ok or not isinstance(model, LinealNN), (
         f"No existe algun archivo compatible con el nombre {name}"
     )
     return model
-
-
-def save_python_model(
-    module: LinealNN, file_path: Path,
-    exists_ok: bool = True
-):
-    """_summary_
-
-    Args:
-        module (LinealNN): _description_
-        file_path (Path): _description_
-        exists_ok (bool, optional): _description_. Defaults to True.
-    """
-    assert exists_ok or not file_path.exists(), (
-        f"El archivo {file_path} ya existe"
-    )
-    save_object(module, file_path)
-
-
-def load_python_model(file_path: Path, not_exists_ok: bool = False):
-    """_summary_
-
-    Args:
-        module (LinealNN): _description_
-        file_path (Path): _description_
-        exists_ok (bool, optional): _description_. Defaults to True.
-    """
-    assert not_exists_ok or file_path.exists(), (
-        f"El archivo {file_path} no existe"
-    )
-    if file_path.exists():
-        return read_object(file_path)
-    return None
 
 
 def save_torch_model(
@@ -113,8 +82,63 @@ def load_torch_model(file_path: Path, not_exists_ok: bool = False):
         f"El archivo {file_path} no existe"
     )
     if file_path.exists():
-        return torch.load(file_path)
+        return torch.load(
+            f=file_path,
+            map_location=torch.get_default_device(),
+            weights_only=False
+        )
     return None
+
+
+def save_torch_model_state(
+    module: LinealNN, file_path: Path,
+    exists_ok: bool = True
+):
+    """_summary_
+
+    Args:
+        module (LinealNN): _description_
+        file_path (Path): _description_
+        exists_ok (bool, optional): _description_. Defaults to True.
+    """
+    assert exists_ok or not file_path.exists(
+    ), f'El archivo {file_path} ya existe'
+    torch.save(module.state_dict(), file_path)
+
+
+def load_torch_model_state(file_path: Path, not_exists_ok: bool = False):
+    """_summary_
+
+    Args:
+        module (LinealNN): _description_
+        file_path (Path): _description_
+        exists_ok (bool, optional): _description_. Defaults to True.
+    """
+    assert not_exists_ok or file_path.exists(), (
+        f"El archivo {file_path} no existe"
+    )
+    if file_path.exists():
+        state = torch.load(
+            f=file_path,
+            map_location=torch.get_default_device(),
+            weights_only=False
+        )
+        model = LinealNN()
+        model.load_state_dict(state, assign=True)
+        return model
+    return None
+
+
+def save_train_onnx_model(
+    module: LinealNN, file_path: Path,
+    exists_ok: bool = True
+):
+    """
+    A
+    """
+    module.train()
+    save_onnx_model(module, file_path, exists_ok)
+    module.eval()
 
 
 def save_onnx_model(module: LinealNN, file_path: Path, exists_ok: bool = True):
@@ -127,15 +151,14 @@ def save_onnx_model(module: LinealNN, file_path: Path, exists_ok: bool = True):
     """
     assert exists_ok or not file_path.exists(
     ), f'El archivo {file_path} ya existe'
-    onnx_program = torch.onnx.export(
+    torch.onnx.export(
         model=module,
+        f=file_path,
         args=(torch.ones((1, module.capacity[0])),),
-        dynamo=True,
+        input_names=['Features'],
+        output_names=['Preprobabilities'],
         export_params=True
     )
-    assert onnx_program is not None
-    onnx_program.optimize()
-    onnx_program.save(file_path)
 
 
 def save_script_model(
@@ -151,8 +174,35 @@ def save_script_model(
     """
     assert exists_ok or not file_path.exists(
     ), f'El archivo {file_path} ya existe'
-    torch.jit.script(torch.jit.trace(
-        module, (torch.ones(1, module.capacity[0])))).save(file_path)
+    torch.jit.script(
+        obj=module,
+        example_inputs=[(torch.ones((1, module.capacity[0])),)],
+        optimize=True
+    ).save(file_path)
+
+
+def save_traced_model(
+    module: LinealNN, file_path: Path,
+    exists_ok: bool = True
+):
+    """_summary_
+
+    Args:
+        module (LinealNN): _description_
+        file_path (Path): _description_
+        exists_ok (bool, optional): _description_. Defaults to True.
+    """
+    assert exists_ok or not file_path.exists(
+    ), f'El archivo {file_path} ya existe'
+    torch.jit.save(
+        torch.jit.trace_module(
+            mod=module,
+            inputs={
+                'forward': (torch.ones(1, module.capacity[0])),
+            }
+        ),
+        file_path
+    )
 
 
 def load_script_model(file_path: Path, not_exists_ok: bool = False):
@@ -177,7 +227,7 @@ def save_object(obj: Any, file_path: Path):
     A
     """
     with file_path.open('wb') as fo:
-        pickle.dump(obj, fo, 5)
+        pickle.dump(obj, fo, -1)
 
 
 def read_object(file_path: Path):

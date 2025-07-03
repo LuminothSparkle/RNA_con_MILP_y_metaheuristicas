@@ -1,4 +1,5 @@
 {
+    "seed" : 42,
     "labels" : {
         "regular features" : [
         ],
@@ -28,15 +29,17 @@
             "Diagnosis"
         ]
     },
-    "data augment" : 0,    
-    "iterations" : 2,
-    "train batches" : 100,
+    "data_augment" : 0,    
+    "iterations" : 5,
+    "train_batches" : 100,
     "crossvalidator" : {
-        "name" : "RepeatedStratifiedKFold",
-        "kwds" : {
-            "n_splits" : 5,
-            "n_repeats" : 5,
-            "random_state" : 42
-        }
+        "tuple" : [
+            "RepeatedStratifiedKFold", [],
+            {
+                "n_splits" : 5,
+                "n_repeats" : 5,
+                "random_state" : 42
+            }
+        ]
     }
 }
