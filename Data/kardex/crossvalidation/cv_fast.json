@@ -25,15 +25,17 @@
             "estado"
         ]
     },
-    "data augment" : 10,    
+    "data_augment" : 10,    
     "iterations" : 10,
-    "train batches" : 32,
+    "train_batches" : 32,
     "crossvalidator" : {
-        "name" : "RepeatedStratifiedKFold",
-        "kwds" : {
-            "n_splits" : 5,
-            "n_repeats" : 5,
-            "random_state" : 42
-        }
+        "tuple" : [
+            "RepeatedStratifiedKFold", [],
+            {
+                "n_splits" : 5,
+                "n_repeats" : 5,
+                "random_state" : 42
+            }
+        ]
     }
 }
