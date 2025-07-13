@@ -17,7 +17,7 @@
             "concavity.*",
             "concave_points.*",
             "symmetry.*",
-            "fractal_dimension*"
+            "fractal_dimension.*"
         ],
         "categorical features" : [
         ],

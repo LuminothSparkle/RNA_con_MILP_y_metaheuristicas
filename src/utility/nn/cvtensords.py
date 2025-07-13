@@ -681,6 +681,8 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
         ).tolist():
             for label in self.labels['ordinal features']:
                 tensor = self.tensors[label][sample, :]
+                if tensor.dim() < 2:
+                    tensor = tensor.unsqueeze(dim=1)
                 added_tensor[label] += [(
                     tensor - 0.5
                     + torch.rand(
@@ -694,6 +696,8 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
             for label in self.labels['categorical features']:
                 if tensor.size(dim=1) == 1:
                     tensor = self.tensors[label][sample, :]
+                    if tensor.dim() < 2:
+                        tensor = tensor.unsqueeze(dim=1)
                     added_tensor[label] += [(
                         0.5 * torch.rand(
                             tensor.size(),
@@ -706,6 +710,8 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
                     )]
                 else:
                     tensor = self.tensors[label][sample, :]
+                    if tensor.dim() < 2:
+                        tensor = tensor.unsqueeze(dim=1)
                     added_tensor[label] += [((
                         tensor + torch.randn(
                             tensor.size(),
@@ -717,6 +723,8 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
                     ).softmax(dim=1))]
             for label in self.labels['normal features']:
                 tensor = self.tensors[label][sample, :]
+                if tensor.dim() < 2:
+                    tensor = tensor.unsqueeze(dim=1)
                 added_tensor[label] += [(
                     tensor + torch.rand(
                             tensor.size(),
@@ -727,9 +735,14 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
                     ) / 10 * torch.tensor(self.std_scalers[label].var_)
                 )]
             for label in self.labels['regular features']:
-                added_tensor[label] += [self.tensors[label][sample, :]]
+                tensor = self.tensors[label][sample, :]
+                if tensor.dim() < 2:
+                    tensor = tensor.unsqueeze(dim=1)
+                added_tensor[label] += [tensor]
             for label in self.labels['sparsed features']:
                 tensor = self.tensors[label][sample, :]
+                if tensor.dim() < 2:
+                    tensor = tensor.unsqueeze(dim=1)
                 added_tensor[label] += [(
                     tensor + (tensor == 0).double()
                     * torch.rand(
@@ -742,6 +755,8 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
                 )]
             for label in self.labels['offset features']:
                 tensor = self.tensors[label][sample, :]
+                if tensor.dim() < 2:
+                    tensor = tensor.unsqueeze(dim=1)
                 added_tensor[label] += [(
                     tensor + torch.rand(
                         tensor.size(),
@@ -752,10 +767,15 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
                     ) / 100 * torch.tensor(self.mm_scalers[label].scale_)
                 )]
             for label in self.labels['regression targets']:
-                added_tensor[label] += [self.tensors[label][sample, :]]
+                tensor = self.tensors[label][sample, :]
+                if tensor.dim() < 2:
+                    tensor = tensor.unsqueeze(dim=1)
+                added_tensor[label] += [tensor]
             for label in self.labels['class targets']:
+                tensor = self.tensors[label][sample, :]
+                if tensor.dim() < 2:
+                    tensor = tensor.unsqueeze(dim=1)
                 if tensor.size(dim=1) == 1:
-                    tensor = self.tensors[label][sample, :]
                     added_tensor[label] += [(
                         0.5 * torch.rand(
                             tensor.size(),
@@ -766,7 +786,6 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
                         ) + 0.5 * (tensor > 0.5).double()
                     )]
                 else:
-                    tensor = self.tensors[label][sample, :]
                     added_tensor[label] += [((
                         tensor + torch.randn(
                             tensor.size(),
@@ -777,9 +796,12 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
                         ).softmax(dim=1)
                     ).softmax(dim=1))]
         for label in (*self.labels['features'], * self.labels['targets']):
+            tensor = self.tensors[label][:self.original_size, :]
+            if tensor.dim() < 2:
+                tensor = tensor.unsqueeze(dim=1)
             self.tensors[label] = torch.concat(
                 (
-                    self.tensors[label][:self.original_size, :],
+                    tensor,
                     *added_tensor[label]
                 ),
                 dim=0

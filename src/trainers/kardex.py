@@ -79,8 +79,8 @@ def main(args: argparse.Namespace):
                 process_career,
                 career_path,
                 args.save_path,
-                arch_data,
-                cv_data,
+                deepcopy(arch_data),
+                deepcopy(cv_data),
                 args.gen_data,
                 not args.no_overwrite
             )]

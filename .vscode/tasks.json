@@ -52,9 +52,9 @@
                 "--load_path",
                 "${workspaceFolder}/Data/kardex",
                 "--arch_path",
-                "${workspaceFolder}/Data/kardex/crossvalidation/arch_fast.json",
+                "${workspaceFolder}/Data/kardex/crossvalidation/arch_1.json",
                 "--cv_path",
-                "${workspaceFolder}/Data/kardex/crossvalidation/cv_fast.json",
+                "${workspaceFolder}/Data/kardex/crossvalidation/cv_1.json",
             ],
             "type": "shell",
             "group": {
