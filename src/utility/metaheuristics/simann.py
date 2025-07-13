@@ -3,35 +3,53 @@ A
 """
 import numpy
 import numpy.random as numpyrand
-from numpy.random import PCG64, SeedSequence
+from numpy import ndarray
+from numpy.random import PCG64, SeedSequence, Generator
+from torch.utils.data import Subset
+from src.utility.metaheuristics.fitness import WeightFitnessCalculator
+from src.utility.metaheuristics.nnnbhd import get_neighbors
 
 
 def simulated_annealing(
-    black_box_fn: (...), x_0, y_0,
-    t_i: float, neighbor_fn: (...),
+    t_i: float,
     iterations: int, t_decay: float,
-    seed: int | None = None
+    weights: list[ndarray | None],
+    train_dataset: Subset,
+    test_dataset: Subset,
+    p: float = 0.5,
+    epochs: int = 1,
+    batch_size: int = 1,
+    seed: int | Generator | None = None
 ):
     """
     A
     """
-    ss = SeedSequence()
-    if seed is not None:
-        ss = SeedSequence(seed)
-    gen = numpyrand.default_rng(PCG64(ss))
-    x = x_0
-    y = y_0
-    x_best = x
-    y_best = y
+    if isinstance(seed, Generator):
+        generator = seed
+    else:
+        seeder = SeedSequence()
+        if isinstance(seed, int):
+            seeder = SeedSequence(seed)
+        generator = numpyrand.default_rng(PCG64(seeder))
+    fittner = WeightFitnessCalculator()
+    fittner.set_params(
+        train_dataset,
+        test_dataset,
+        epochs,
+        batch_size
+    )
+    best_fitness, best_weights = fittner.evaluate(weights)
+    weights, prev_fitness = best_weights, best_fitness
     temperature = t_i
     for _ in range(iterations):
-        neighbor_x = neighbor_fn(x)
-        neighbor_y = black_box_fn(neighbor_x)
-        if neighbor_y < y_best:
-            x_best, y_best = neighbor_x, neighbor_y
-        if bool(gen.binomial(
-            1, min(1, numpy.exp(-(neighbor_y - y) / temperature))
+        neighbors = get_neighbors(best_weights, p, generator)
+        neighbor = generator.choice(neighbors)
+        fitness, neighbor = fittner.evaluate(neighbor, seed=generator)
+        if fitness > best_fitness:
+            best_fitness, best_weights = fitness, neighbor
+        if bool(generator.binomial(
+            1, min(1, numpy.exp(-(prev_fitness - fitness) / temperature))
         )):
-            x, y = neighbor_x, neighbor_y
+            weights, prev_fitness = neighbor, fitness
         temperature *= t_decay
-    return x_best, y_best
+    return best_weights

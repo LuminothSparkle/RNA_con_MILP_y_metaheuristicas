@@ -51,7 +51,6 @@ class CrossvalidationTensorDataset(CrossvalidationDataset):
     features_tensor: Tensor
     targets_size: int
     features_size: int
-    crossvalidation_mode: bool
     original_size: int
     augment_size: int | None
     size: int

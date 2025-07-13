@@ -28,6 +28,7 @@ class CrossvalidationDataset(Dataset):
     class_targets: DataFrame
     regression_targets: DataFrame
     features: DataFrame
+    crossvalidation_mode: bool
 
     @classmethod
     def from_dataframes(
@@ -163,7 +164,7 @@ def crossvalidate(
                 generator.manual_seed(
                     int(gen.integers(
                         low=0, high=0xffff_ffff_ffff_ffff,
-                        endpoint=True, dtype=uint64 
+                        endpoint=True, dtype=uint64
                     ))
                 )
                 test_size = len(test_dataset)

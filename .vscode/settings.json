@@ -1,5 +1,6 @@
 {
   "files.associations": {
+    ".fantomasignore": "ignore",
     "vector": "cpp",
     "ranges": "cpp",
     "tuple": "cpp",
@@ -45,7 +46,9 @@
     "xlocale": "cpp",
     "xlocmon": "cpp",
     "xlocnum": "cpp",
-    "xmemory": "cpp"
+    "xmemory": "cpp",
+    "iosfwd": "cpp",
+    "optional": "cpp"
   },
   "C_Cpp_Runner.cCompilerPath": "gcc",
   "C_Cpp_Runner.cppCompilerPath": "g++",
@@ -118,5 +121,28 @@
   "python.analysis.extraCommitChars": true,
   "python.analysis.diagnosticMode": "workspace",
   "python.analysis.completeFunctionParens": true,
-  "python.analysis.autoFormatStrings": true
+  "python.analysis.autoFormatStrings": true,
+  "C_Cpp.autocompleteAddParentheses": true,
+  "C_Cpp.default.cppStandard": "c++23",
+  "C_Cpp.default.cStandard": "c23",
+  "C_Cpp.default.intelliSenseMode": "linux-gcc-x64",
+  "C_Cpp.inlayHints.parameterNames.enabled": true,
+  "C_Cpp.inlayHints.autoDeclarationTypes.showOnLeft": true,
+  "C_Cpp.inlayHints.referenceOperator.enabled": true,
+  "C_Cpp.inlayHints.referenceOperator.showSpace": false,
+  "C_Cpp.workspaceParsingPriority": "low",
+  "C_Cpp.vcFormat.indent.accessSpecifiers": false,
+  "C_Cpp.vcFormat.indent.caseLabels": true,
+  "C_Cpp.vcFormat.indent.braces": true,
+  "C_Cpp.vcFormat.newLine.beforeOpenBrace.block": "sameLine",
+  "C_Cpp.vcFormat.newLine.beforeOpenBrace.function": "sameLine",
+  "C_Cpp.vcFormat.newLine.beforeOpenBrace.lambda": "sameLine",
+  "C_Cpp.vcFormat.newLine.beforeOpenBrace.namespace": "sameLine",
+  "C_Cpp.vcFormat.newLine.beforeOpenBrace.type": "sameLine",
+  "C_Cpp.vcFormat.space.afterCastCloseParenthesis": true,
+  "C_Cpp.vcFormat.newLine.scopeBracesOnSeparateLines": true,
+  "C_Cpp.vcFormat.space.beforeComma": true,
+  "C_Cpp.vcFormat.space.beforeInitializerListOpenBrace": true,
+  "C_Cpp.vcFormat.space.beforeLambdaOpenParenthesis": true,
+  "C_Cpp.vcFormat.space.beforeEmptySquareBrackets": true
 }

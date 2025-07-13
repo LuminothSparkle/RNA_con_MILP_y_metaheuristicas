@@ -10,8 +10,8 @@ import numpy
 from numpy import ndarray
 import pandas
 from pandas import DataFrame, Index, read_csv
-from torch.nn import Hardtanh, PReLU, Dropout, LeakyReLU
-from crossvalidation.cvdir import safe_suffix
+from torch.nn import Hardtanh, PReLU, LeakyReLU
+from crossvalidation.files import safe_suffix
 from src.utility.nn.lineal import LinealNN
 from src.utility.io.model import load_model, save_model
 
@@ -76,23 +76,22 @@ def read_sol_file(file_path: Path) -> list[ndarray]:
     w_var_dataframe = sol_dataframe.loc[
         sol_dataframe.index.str.startswith('w_'), :
     ]
-    layers = 1
+    layers = 0
     for name in w_var_dataframe.index:
-        _, k, = name.split('_')
-        k = int(k)
-        layers = max(k + 1, layers)
-    dim_list = [[1, 1] for _ in range(layers)]
+        _, k, _, _ = name.split('_')
+        layers = max(int(k) + 1, layers)
+    dim_list = [[0, 0] for _ in range(layers)]
     for name in w_var_dataframe.index:
         _, k, i, j, = name.split('_')
-        i, j, k = int(k), int(j), int(k)
+        i, j, k = int(i), int(j), int(k)
         dim_list[k][0] = max(dim_list[k][0], i + 1)
         dim_list[k][1] = max(dim_list[k][1], j + 1)
     w_list = [numpy.zeros(dim) for dim in dim_list]
     for name, value in w_var_dataframe.itertuples(index=True):
         _, k, i, j, = name.split('_')
-        i, j, k = int(k), int(j), int(k)
+        i, j, k = int(i), int(j), int(k)
         w_list[k][i, j] = float(value)
-    return w_list
+    return [w.T for w in w_list]
 
 
 def read_files(
@@ -113,7 +112,8 @@ def read_files(
         )
         future_sol = executor.submit(
             read_sol_file,
-            gurobi_path / safe_suffix('model', case_index) / f'{read_name}.sol'
+            gurobi_path / safe_suffix('model', case_index)
+            / f'{safe_suffix(read_name, "gurobi")}.sol'
         )
         module = future_model.result()
         weights = future_sol.result()
@@ -125,7 +125,8 @@ def read_files(
 def write_files(
     module: LinealNN,
     dir_path: Path, save_name: str = '',
-    zero_tolerance: float = 0.00001, min_bits: int = 8,
+    zero_tolerance: float = 0.00001, min_bits: int = 2,
+    max_bits: int = 10,
     w_penalty: float | None = None,
     exists_ok=True
 ):
@@ -133,25 +134,40 @@ def write_files(
     Temp
     """
     dir_path.mkdir(parents=True, exist_ok=True)
-    files_suffix = ['bias', 'exp', 'bits', 'mask',
-                    'arch', 'lrelu', 'cls_tgt', 'reg_tgt', 'ftr', 'init']
+    files_suffix = [
+        'bias', 'exp', 'bits', 'mask', 'arch',
+        'lrelu', 'cls_tgt', 'reg_tgt', 'ftr', 'init'
+    ]
     files_path_dict = {
         file_type: dir_path / f'{safe_suffix(save_name, file_type)}.csv'
         for file_type in files_suffix
     }
     layers, act_layers = module.layers, module.activation_layers
-    masks, act_func = module.masks, module.activation
+    masks = [mask.cpu().detach().numpy() for mask in module.masks]
     weights = module.get_weights()
     mantissa, exponent = zip(*(numpy.frexp(weight.T) for weight in weights))
+    mantissa = list(mantissa)
     exponent = list(exponent)
+    bits = []
+    for m in mantissa:
+        mbit = numpy.full_like(m, 0)
+        m = m + (m < 0)
+        while (m > zero_tolerance).any():
+            mbit[m > zero_tolerance] += 1
+            m, _ = numpy.modf(2 * m)
+        bits += [mbit]
     bits = [
-        numpy.minimum(
-            numpy.abs(numpy.floor_divide(1, numpy.log2(numpy.abs(m)))),
-            numpy.full_like(m, min_bits)
-        ).astype(int) for m in mantissa
+        numpy.maximum(
+            numpy.minimum(
+                mbit,
+                numpy.full_like(mbit, max_bits)
+            ),
+            numpy.full_like(mbit, min_bits)
+        )
+        for mbit in bits
     ]
     connections = [
-        (numpy.absolute(weight).T > zero_tolerance).astype(int)
+        (mask.T * (numpy.abs(weight).T > zero_tolerance)).astype(int)
         for weight, mask in zip(weights, masks)
     ]
     leaky_relu = [
@@ -199,20 +215,12 @@ def write_files(
     arch['cap'] = module.capacity
     arch['act'] = [
         *(
-            act_func[k][0] if k in act_func else 'None'
-            for k in range(layers)
+            act[0]
+            for act in module.activation
         ),
         None
     ]
-    arch['dp'] = [
-        *(
-            act_layers[k].p
-            if isinstance(act_layers[k], Dropout)
-            else None
-            for k in range(layers)
-        ),
-        None
-    ]
+    arch['dp'] = [*module.dropout, None]
     arch['ht_min'] = [
         *(
             act_layers[k].min_val
@@ -265,6 +273,7 @@ def main(args: argparse.Namespace):
                 save_name=args.save_name,
                 zero_tolerance=args.zero_tolerance,
                 min_bits=args.min_bits,
+                max_bits=args.max_bits,
                 w_penalty=args.w_penalty,
                 exists_ok=not args.no_overwrite
             )
@@ -302,7 +311,8 @@ if __name__ == '__main__':
         '--zero_tolerance', '-zt',
         type=float, default=0.000001
     )
-    argparser.add_argument('--min_bits', '-mb', type=int, default=8)
+    argparser.add_argument('--min_bits', '-mib', type=int, default=2)
+    argparser.add_argument('--max_bits', '-mab', type=int, default=10)
     argparser.add_argument(
         '--no_overwrite', '-eo',
         action='store_true'

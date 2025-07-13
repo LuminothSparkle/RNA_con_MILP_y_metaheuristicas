@@ -28,6 +28,9 @@ from torch.nn.utils import fuse_linear_bn_weights
 
 
 def set_defaults():
+    """
+    A
+    """
     torch.set_default_device('cpu')
     torch.set_default_dtype(torch.double)
     if torch.cuda.is_available():
@@ -184,7 +187,11 @@ class LinealNN(Module):
                 model.loss_layer = LossModule(kwargs['loss_layer'])
         model.learnable_layers = [True for _ in range(layers)]
         model.bias = [  # type: ignore
-            1.0 if 'bias' not in kwargs
+            1.0 if (
+                'bias' not in kwargs
+                or isinstance(kwargs['bias'], dict)
+                and k not in kwargs['bias']
+            )
             else kwargs['bias'][k]
             if (
                 isinstance(kwargs['bias'], list)
@@ -192,15 +199,14 @@ class LinealNN(Module):
                 and k in kwargs['bias']
             )
             else kwargs['bias']
-            if (
-                not isinstance(kwargs['bias'], dict)
-                and kwargs['bias'] is not None
-            )
-            else 1.0
             for k in range(layers)
         ]
         model.dropout = [  # type: ignore
-            None if 'dropout' not in kwargs
+            None if (
+                'dropout' not in kwargs
+                or isinstance(kwargs['dropout'], dict)
+                and k not in kwargs['dropout']
+            )
             else kwargs['dropout'][k]
             if (
                 isinstance(kwargs['dropout'], list)
@@ -208,12 +214,14 @@ class LinealNN(Module):
                 and k in kwargs['dropout']
             )
             else kwargs['dropout']
-            if not isinstance(kwargs['dropout'], dict)
-            else None
             for k in range(layers)
         ]
         model.connection_dropout = [  # type: ignore
-            None if 'connection_dropout' not in kwargs
+            None if (
+                'connection_dropout' not in kwargs
+                or isinstance(kwargs['connection_dropout'], dict)
+                and k not in kwargs['connection_dropout']
+            )
             else kwargs['connection_dropout'][k]
             if (
                 isinstance(kwargs['connection_dropout'], list)
@@ -221,12 +229,14 @@ class LinealNN(Module):
                 and k in kwargs['connection_dropout']
             )
             else kwargs['connection_dropout']
-            if not isinstance(kwargs['connection_dropout'], dict)
-            else None
             for k in range(layers)
         ]
         model.batch_norm = [  # type: ignore
-            False if 'batch_norm' not in kwargs
+            False if (
+                'batch_norm' not in kwargs
+                or isinstance(kwargs['batch_norm'], dict)
+                and k not in kwargs['batch_norm']
+            )
             else kwargs['batch_norm'][k]
             if (
                 isinstance(kwargs['batch_norm'], list)
@@ -234,15 +244,14 @@ class LinealNN(Module):
                 and k in kwargs['batch_norm']
             )
             else kwargs['batch_norm']
-            if (
-                not isinstance(kwargs['batch_norm'], dict)
-                and kwargs['batch_norm'] is not None
-            )
-            else False
             for k in range(layers)
         ]
         model.activation = [  # type: ignore
-            ('None',) if 'activation' not in kwargs
+            ('None',) if (
+                'activation' not in kwargs
+                or isinstance(kwargs['activation'], dict)
+                and k not in kwargs['activation']
+            )
             else kwargs['activation'][k]
             if (
                 isinstance(kwargs['activation'], list)
@@ -250,15 +259,14 @@ class LinealNN(Module):
                 and k in kwargs['activation']
             )
             else kwargs['activation']
-            if (
-                not isinstance(kwargs['activation'], dict)
-                and kwargs['activation'] is not None
-            )
-            else ('None',)
             for k in range(layers)
         ]
         model.weights_initializers = [  # type: ignore
-            None if 'weights_initializers' not in kwargs
+            None if (
+                'weights_initializers' not in kwargs
+                or isinstance(kwargs['weights_initializers'], dict)
+                and k not in kwargs['weights_initializers']
+            )
             else kwargs['weights_initializers'][k]
             if (
                 isinstance(kwargs['weights_initializers'], list)
@@ -266,8 +274,6 @@ class LinealNN(Module):
                 and k in kwargs['weights_initializers']
             )
             else kwargs['weights_initializers']
-            if not isinstance(kwargs['weights_initializers'], dict)
-            else None
             for k in range(layers)
         ]
         model.masks = [
@@ -275,21 +281,22 @@ class LinealNN(Module):
                 (capacity[k + 1], capacity[k] + 1),
                 1
             ).bool()
-            if 'masks' not in kwargs
-            else kwargs['masks'][k]
             if (
-                isinstance(kwargs['masks'], list)
+                'masks' not in kwargs
                 or isinstance(kwargs['masks'], dict)
-                and k in kwargs['masks']
+                and k not in kwargs['masks']
+                or not isinstance(kwargs['masks'], list)
             )
-            else torch.full(
-                (capacity[k + 1], capacity[k] + 1),
-                1
-            ).bool()
+            else kwargs['masks'][k]
             for k in range(layers)
         ]
         model.l1_weight = [  # type: ignore
-            None if 'l1_weight' not in kwargs
+            None if (
+                'l1_weight' not in kwargs
+                or k + 1 >= layers
+                or isinstance(kwargs['l1_weight'], dict)
+                and k not in kwargs['l1_weight']
+            )
             else kwargs['l1_weight'][k]
             if (
                 isinstance(kwargs['l1_weight'], list)
@@ -297,12 +304,15 @@ class LinealNN(Module):
                 and k in kwargs['l1_weight']
             )
             else kwargs['l1_weight']
-            if not isinstance(kwargs['l1_weight'], dict)
-            else None
             for k in range(layers)
         ]
         model.l1_activation = [  # type: ignore
-            None if 'l1_activation' not in kwargs
+            None if (
+                'l1_activation' not in kwargs
+                or k + 1 >= layers
+                or isinstance(kwargs['l1_activation'], dict)
+                and k not in kwargs['l1_activation']
+            )
             else kwargs['l1_activation'][k]
             if (
                 isinstance(kwargs['l1_activation'], list)
@@ -310,12 +320,15 @@ class LinealNN(Module):
                 and k in kwargs['l1_activation']
             )
             else kwargs['l1_activation']
-            if not isinstance(kwargs['l1_activation'], dict)
-            else None
             for k in range(layers)
         ]
         model.l2_weight = [  # type: ignore
-            None if 'l2_weight' not in kwargs
+            None if (
+                'l2_weight' not in kwargs
+                or k + 1 >= layers
+                or isinstance(kwargs['l2_weight'], dict)
+                and k not in kwargs['l2_weight']
+            )
             else kwargs['l2_weight'][k]
             if (
                 isinstance(kwargs['l2_weight'], list)
@@ -323,12 +336,15 @@ class LinealNN(Module):
                 and k in kwargs['l2_weight']
             )
             else kwargs['l2_weight']
-            if not isinstance(kwargs['l2_weight'], dict)
-            else None
             for k in range(layers)
         ]
         model.l2_activation = [  # type: ignore
-            None if 'l2_activation' not in kwargs
+            None if (
+                'l2_activation' not in kwargs
+                or k + 1 >= layers
+                or isinstance(kwargs['l2_activation'], dict)
+                and k not in kwargs['l2_activation']
+            )
             else kwargs['l2_activation'][k]
             if (
                 isinstance(kwargs['l2_activation'], list)
@@ -336,8 +352,6 @@ class LinealNN(Module):
                 and k in kwargs['l2_activation']
             )
             else kwargs['l2_activation']
-            if not isinstance(kwargs['l2_activation'], dict)
-            else None
             for k in range(layers)
         ]
         model.verbosity = (
@@ -626,6 +640,7 @@ class LinealNN(Module):
         A
         """
         set_defaults()
+
         def closure():
             with ThreadPoolExecutor(max_workers=10) as executor:
                 self.train()
@@ -798,19 +813,23 @@ class LinealNN(Module):
         with torch.inference_mode():
             weights = []
             for k, linear in enumerate(self.linear_layers):
-                w, b = torch.tensor_split(
-                    linear.weight,  # type: ignore
-                    (self.capacity[k], 1),
-                    dim=1
-                )
-                if isinstance(self.batch_norm_layers[k], BatchNorm1d):
-                    bn = self.batch_norm_layers[k]
-                    w, b = fuse_linear_bn_weights(
-                        w, b, bn.running_mean, bn.running_var,  # type: ignore
-                        bn.eps, bn.weight, bn.bias  # type: ignore
+                if isinstance(linear, Linear):
+                    w, b = torch.split_with_sizes(
+                        linear.weight,  # type: ignore
+                        (self.capacity[k], 1),
+                        dim=1
                     )
-                weight = torch.concat((w, b), dim=1)
-                weights += [weight.cpu().detach().numpy()]
+                    if isinstance(self.batch_norm_layers[k], BatchNorm1d):
+                        bn = self.batch_norm_layers[k]
+                        w, b = fuse_linear_bn_weights(
+                            w, b, bn.running_mean,  # type: ignore
+                            bn.running_var,  # type: ignore
+                            bn.eps, bn.weight, bn.bias  # type: ignore
+                        )
+                    weight = torch.concat((w, b), dim=1)
+                    weights += [weight.cpu().detach().numpy()]
+                else:
+                    weights += [None]
         return weights
 
     def set_weights(self, weights: list[ndarray]):
@@ -827,8 +846,9 @@ class LinealNN(Module):
                     )
                 self.linear_layers[k].weight = Parameter(  # type: ignore
                     torch.tensor(weights[k], requires_grad=True)
-                    * self.masks[k].type_as(
-                        weights[k]  # type: ignore
+                    * self.masks[k].to(
+                        device=torch.get_default_device(),
+                        dtype=torch.get_default_dtype()
                     )
                 )
 

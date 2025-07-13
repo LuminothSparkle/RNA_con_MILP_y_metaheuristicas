@@ -11,8 +11,8 @@ from concurrent.futures import ThreadPoolExecutor
 import torch
 from src.trainers.datasets import KardexDataset, test_arch
 from src.utility.io.nnjson import read_arch_json, read_cv_json, gen_from_tuple
-from src.crossvalidation.cvdir import generate_cv_data
-from src.utility.io.crossvalidation import save_crossvalidation
+from crossvalidation.files import generate_cv_files
+from utility.io.crossval import save_crossvalidation
 
 
 def process_career(
@@ -56,7 +56,7 @@ def process_career(
         **data
     )
     if gen_data:
-        generate_cv_data(
+        generate_cv_files(
             dir_path=results_path,
             name='kardex',
             exists_ok=exists_ok,

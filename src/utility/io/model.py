@@ -162,12 +162,20 @@ def save_onnx_model(module: LinealNN, file_path: Path, exists_ok: bool = True):
     torch.set_default_device('cpu')
     torch.set_default_dtype(torch.double)
     cpu_module = LinealNN()
-    cpu_module.load_state_dict(deepcopy(module.state_dict()), assign=True, strict=False)
+    cpu_module.load_state_dict(
+        deepcopy(module.state_dict()),
+        assign=True, strict=False
+    )
     cpu_module.to(device='cpu', dtype=torch.double, non_blocking=True)
     torch.onnx.export(
         model=cpu_module,
         f=file_path,
-        args=(torch.ones((1, module.capacity[0]), device='cpu', dtype=torch.double),),
+        args=(
+            torch.ones(
+                (1, module.capacity[0]),
+                device='cpu', dtype=torch.double
+            ),
+        ),
         input_names=['Features'],
         output_names=['Preprobabilities'],
         export_params=True

@@ -7,8 +7,8 @@ from pathlib import Path
 import torch
 from src.trainers.datasets import BCWDataset, test_arch
 from src.utility.io.nnjson import gen_from_tuple, read_arch_json, read_cv_json
-from src.crossvalidation.cvdir import generate_cv_data
-from src.utility.io.crossvalidation import save_crossvalidation
+from crossvalidation.files import generate_cv_files
+from utility.io.crossval import save_crossvalidation
 
 
 def main(args: argparse.Namespace):
@@ -48,7 +48,7 @@ def main(args: argparse.Namespace):
         **results_dict
     )
     if args.gen_data:
-        generate_cv_data(
+        generate_cv_files(
             dir_path=results_path,
             name='bcw',
             exists_ok=not args.no_overwrite,
