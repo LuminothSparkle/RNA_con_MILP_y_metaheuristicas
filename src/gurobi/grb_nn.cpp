@@ -18,6 +18,8 @@
 #include <numeric>
 #include <random>
 #include <array>
+#include <concepts>
+#include <type_traits>
 
 // Simplificacion de espacio de nombres
 namespace fsys = std::filesystem;
@@ -76,6 +78,8 @@ using std::ldexp;
 using std::modf;
 using std::max;
 using std::min;
+// Conceptos usados
+using std::same_as;
 
 // Simplificacion de tipos de datos a tensores
 template<typename T>
@@ -88,6 +92,35 @@ template<typename T>
 using ten4 = vec<ten3<T>>;
 template<typename T>
 using ten5 = vec<ten4<T>>;
+
+template<typename T>
+concept GRBLinExprAcceptable = requires (T r) {
+   GRBLinExpr() + r;
+};
+
+template<typename R>
+concept AlgorithmicRange = (
+   ranges::common_range<R> && ranges::viewable_range<R> &&
+   ranges::forward_range<R> && ranges::input_range<R>
+);
+
+template<typename R, typename T>
+concept RangeOf = same_as<ranges::range_value_t<R>, T> && AlgorithmicRange<R>;
+
+template<typename R, typename T>
+concept MatrixRange = RangeOf<ranges::range_value_t<R>, T> && AlgorithmicRange<R>;
+
+template<typename R, typename T>
+concept Tensor3Range = MatrixRange<ranges::range_value_t<R>, T> && AlgorithmicRange<R>;
+
+template<typename R, typename T>
+concept Tensor4Range = Tensor3Range<ranges::range_value_t<R>, T> && AlgorithmicRange<R>;
+
+template<typename R, typename T>
+concept Tensor5Range = Tensor4Range<ranges::range_value_t<R>, T> && AlgorithmicRange<R>;
+
+template<typename R>
+concept GRBLinExprRange = GRBLinExprAcceptable< ranges::range_value_t<R> > && AlgorithmicRange<R>;
 
 void resetline_console() {
    cout << "\x0D\x1b[K" << flush;
@@ -156,12 +189,30 @@ auto decompose_w(const optional<double>& w, int size) {
    return make_tuple(bits_floor, bits_ceil);
 }
 
-double calculate_w(const vec<optional<double>>& b, int exp) {
-   double result = 0.0;
+double calculate_w(const RangeOf<optional<double>> auto& b, int exp) {
+   double result = ldexp(-(*ranges::begin(b)).value_or(0), exp);
    for(const auto& [i, b] : b | views::enumerate | views::drop(1)) {
       result = fma(b.value_or(0), exp2(exp - i), result);
    }
-   return fma(-b[0].value_or(0), exp2(exp), result);
+   return result;
+}
+
+void set_grb_int_param(GRBEnv& env, const string& arg, GRB_IntParam code) {
+   int param;
+   stringstream(arg) >> param;
+   env.set(code, param);
+}
+
+void set_grb_double_param(GRBEnv& env, const string& arg, GRB_DoubleParam code) {
+   double param;
+   stringstream(arg) >> param;
+   env.set(code, param);
+}
+
+void set_grb_string_param(GRBEnv& env, const string& arg, GRB_StringParam code) {
+   string param;
+   stringstream(arg) >> param;
+   env.set(code, param);
 }
 
 /// @brief Analiza la expresion de gurobi para saber si solamente consiste
@@ -212,14 +263,28 @@ GRBLinExpr gen_abs_range_obj_expr(
    return plus + minus;
 }
 
-template<typename T>
-GRBLinExpr gen_sum_expr(const vec<T>& X) {
+GRBLinExpr gen_approx_square_obj_expr(
+   GRBModel& model, const GRBLinExpr& expr, const string& var_name,
+   bool lazy = 1, bool use_gurobi = false, int var_hint = -10
+) {
+   auto [plus1, minus1] = gen_abs_obj_vars(model, format("{}_1", var_name), var_hint);
+   plus1.set(GRB_DoubleAttr_UB, 2.0);
+   minus1.set(GRB_DoubleAttr_UB, 2.0);
+   auto [plus2, minus2] = gen_abs_obj_vars(model, format("{}_2", var_name), var_hint);
+   plus2.set(GRB_DoubleAttr_UB, 4.5);
+   minus2.set(GRB_DoubleAttr_UB, 4.5);
+   auto [plus3, minus3] = gen_abs_obj_vars(model, format("{}_3", var_name), var_hint);
+   gen_range_constr(model, plus1 - minus1 + plus2 - minus2 + plus3 - minus3 + expr, -0.5, 0.5, var_name, lazy, use_gurobi);
+   return 2 * (plus1 + minus1) + 8 * (plus2 + minus2) + 20 * (plus3 + minus3);
+}
+
+
+GRBLinExpr gen_sum_expr(const GRBLinExprRange auto& X) {
    return accumulate(X.begin(), X.end(), GRBLinExpr());
 }
 
-template<typename T>
-GRBLinExpr gen_mean_expr(const vec<T>& X) {
-   return gen_sum_expr(X) / max<int>(1, X.size());
+GRBLinExpr gen_mean_expr(const GRBLinExprRange auto& X) {
+   return gen_sum_expr(X) / max<int>(1, ranges::distance(X));
 }
 
 /// @brief Genera una variable de gurobi que es igual a una expresion. Añade la
@@ -300,15 +365,16 @@ GRBVar gen_bin_w_var(
 }
 
 GRBLinExpr gen_bin_w_expr(
-   GRBModel& model, const GRBVar& b, const GRBLinExpr& a, const string& var_name,
-   double coef, int lazy = 0, bool use_sos = false
+   GRBModel& model, const GRBVar& b, const GRBLinExpr& a,
+   const string& var_name, double coef, int lazy = 0, bool use_sos = false
 ) {
    return gen_bin_w_var(model, b, a, var_name, coef, lazy, use_sos);
 }
 
 GRBLinExpr gen_hardtanh_expr(
-   GRBModel& model, const GRBLinExpr& z, const string& constr_name, const pair<double,double>& limits = {-1,1},
-   int lazy = 0, bool use_gurobi = false, bool use_sos = false
+   GRBModel& model, const GRBLinExpr& z, const string& constr_name,
+   const pair<double, double>& limits = {-1,1}, int lazy = 0,
+   bool use_gurobi = false, bool use_sos = false
 ) {
    GRBVar zmax_max = model.addVar(0, GRB_INFINITY, 0, GRB_CONTINUOUS, format("{}_max", constr_name));
    GRBVar zmin_max = model.addVar(0, GRB_INFINITY, 0, GRB_CONTINUOUS, format("{}_min", constr_name));
@@ -320,11 +386,9 @@ GRBLinExpr gen_hardtanh_expr(
       GRBVar on_zmin = model.addVar(0, 1, 0, GRB_BINARY, format("{}_minlb", constr_name));
       model.addGenConstrIndicator(on_zmin, 0, zmin_max <= z - limits.first, format("{}_minoff",  constr_name));
       if(use_sos) {
-         array<GRBVar, 2> vars_zmax{on_zmax, zmax_max};
-         array<double, 2> weights_zmax{0, 1};
+         array<GRBVar, 2> vars_zmax{on_zmax, zmax_max}; array<double, 2> weights_zmax{0, 1};
          model.addSOS(vars_zmax.data(), weights_zmax.data(), 2, GRB_SOS_TYPE1);
-         array<GRBVar, 2> vars_zmin{on_zmin, zmin_max};
-         array<double, 2> weights_zmin{0, 1};
+         array<GRBVar, 2> vars_zmin{on_zmin, zmin_max}; array<double, 2> weights_zmin{0, 1};
          model.addSOS(vars_zmin.data(), weights_zmin.data(), 2, GRB_SOS_TYPE1);
       }
       else {
@@ -412,11 +476,9 @@ GRBLinExpr gen_ReLU6_expr(
       GRBVar on_z6 = model.addVar(0, 1, 0, GRB_BINARY, format("{}_z6lb", constr_name));
       model.addGenConstrIndicator(on_z6, 0, z6_max <= z - 6, format("{}_z6off",  constr_name));
       if(use_sos) {
-         array<GRBVar, 2> vars_z{on_z, z_max};
-         array<double, 2> weights_z{0, 1};
+         array<GRBVar, 2> vars_z{on_z, z_max}; array<double, 2> weights_z{0, 1};
          model.addSOS(vars_z.data(), weights_z.data(), 2, GRB_SOS_TYPE1);
-         array<GRBVar, 2> vars_z6{on_z6, z6_max};
-         array<double, 2> weights_z6{0, 1};
+         array<GRBVar, 2> vars_z6{on_z6, z6_max}; array<double, 2> weights_z6{0, 1};
          model.addSOS(vars_z6.data(), weights_z6.data(), 2, GRB_SOS_TYPE1);
       }
       else {
@@ -453,8 +515,7 @@ GRBLinExpr gen_ReLU_expr(
       GRBVar on_z = model.addVar(0, 1, 0, GRB_BINARY, format("{}_lb", constr_name));
       model.addGenConstrIndicator(on_z, 0, var <= z, format("{}_off",  constr_name));
       if(use_sos) {
-         array<GRBVar, 2> vars_z{on_z, var};
-         array<double, 2> weights_z{0, 1};
+         array<GRBVar, 2> vars_z{on_z, var}; array<double, 2> weights_z{0, 1};
          model.addSOS(vars_z.data(), weights_z.data(), 2, GRB_SOS_TYPE1);
       }
       else {
@@ -483,14 +544,12 @@ GRBLinExpr gen_LeakyReLU_expr(
    return max_z0 + neg_coef * min_z0;
 }
 
-template<typename T>
-GRBLinExpr gen_act_w_expr(const vec<T>& bw) {
+GRBLinExpr gen_act_w_expr(const GRBLinExprRange auto& bw) {
    return accumulate(bw.begin() + 1, bw.end(), -bw[0]);
 }
 
-template<typename T>
 GRBLinExpr gen_w_expr(
-   GRBModel& model, const vec<T>& b, int exponent = 4,
+   GRBModel& model, const GRBLinExprRange auto& b, int exponent = 4,
    int lazy = 0, GRBLinExpr tw = 0
 ) {
    vec<GRBLinExpr> exp;
@@ -500,9 +559,8 @@ GRBLinExpr gen_w_expr(
    return accumulate(exp.begin() + 1, exp.end(), -exp[0] + tw);
 }
 
-template<typename T>
 GRBVar gen_w_var(
-   GRBModel& model, const vec<T>& b, const string& var_name,
+   GRBModel& model, const GRBLinExprRange auto& b, const string& var_name,
    int precis = 4, int lazy = 0, GRBLinExpr tw = 0
 ) {
    return gen_var(
@@ -514,10 +572,10 @@ GRBVar gen_w_var(
    );
 }
 
-template<typename T>
-vec<GRBLinExpr> gen_activation_exprs(
-   GRBModel& model, const string& type, const vec<T>& z, const string& constr_name,
-   const vec<double>& LeakyReLU_coef, const pair<double,double>& hardtanh_limits,
+auto gen_activation_exprs(
+   GRBModel& model, const string& type, const GRBLinExprRange auto& z,
+   const string& constr_name, const RangeOf<double> auto& LeakyReLU_coef,
+   const pair<double,double>& hardtanh_limits,
    int lazy = 0, bool use_gurobi = false, bool use_sos = false
 ) {
    vec<GRBLinExpr> a;
@@ -572,21 +630,24 @@ vec<GRBLinExpr> gen_activation_exprs(
    return a;
 }
 
-template<typename T>
+template<typename R>
+requires RangeOf<R, double> && ranges::random_access_range<R>
 GRBLinExpr gen_class_error_expr(
-   GRBModel& model, const vec<T>& y, const string& constr_name, const vec<double>& ty,
-   int cases, const vec<double>& class_count, double zero_tolerance = 0.000000000001,
+   GRBModel& model, const GRBLinExprRange auto& y, const string& constr_name, const RangeOf<double> auto& ty,
+   int cases, const R& class_count, double zero_tolerance = 0.000000000001,
    double constraint_tolerance = 0.1, int lazy = 0, bool use_gurobi = false
 ) {
    vec<GRBLinExpr> exprs;
    if(ty.size() == 1) {
       // Clasificación binaria
-      double divisor = ty[0] < 0.5 ? cases - class_count[0] : class_count[0];
-      double min_value = inverse_sigmoid(max(-constraint_tolerance + ty[0], ty[0] > 0.5 ? 0.5 : 0), zero_tolerance);
-      double max_value = inverse_sigmoid(min(constraint_tolerance + ty[0], ty[0] < 0.5 ? 0.5 : 1), zero_tolerance);
+      double ty0 = *ranges::begin(ty);
+      GRBLinExpr y0 = *ranges::begin(y);
+      double divisor = ty0 < 0.5 ? cases - class_count[0] : class_count[0];
+      double min_value = inverse_sigmoid(max(-constraint_tolerance + ty0, ty0 > 0.5 ? 0.5 : 0), zero_tolerance);
+      double max_value = inverse_sigmoid(min(constraint_tolerance + ty0, ty0 < 0.5 ? 0.5 : 1), zero_tolerance);
       exprs.emplace_back(
          gen_abs_range_obj_expr(
-            model, y[0], constr_name, min_value, max_value, lazy, use_gurobi, 10
+            model, y0, constr_name, min_value, max_value, lazy, use_gurobi, 10
          ) / max(zero_tolerance, divisor)
       );
    }
@@ -606,26 +667,33 @@ GRBLinExpr gen_class_error_expr(
    return gen_mean_expr(exprs);
 }
 
-template<typename T>
 GRBLinExpr gen_regression_error_expr(
-   GRBModel& model, const vec<T>& y, const string& constr_name, const vec<double>& ty,
-   double zero_tolerance = 0.0001, double constraint_tolerance = 0.0, int lazy = 0, bool use_gurobi = false
+   GRBModel& model, const GRBLinExprRange auto& y, const string& constr_name,
+   const RangeOf<double> auto& ty, double zero_tolerance = 0.0001,
+   double constraint_tolerance = 0.0, int lazy = 0, bool use_gurobi = false, bool use_square = false
 ) {
    vec<GRBLinExpr> exprs;
    for(const auto& [i, y, ty] : views::zip(views::iota(0), y, ty)) {
-      double min_value = -constraint_tolerance * max(abs(ty), zero_tolerance);
-      double max_value = constraint_tolerance * max(abs(ty), zero_tolerance);
-      exprs.emplace_back(gen_abs_range_obj_expr(
-         model, y - ty, format("{}_{}", constr_name, i),
-         min_value, max_value, lazy, use_gurobi, 10
-      ));
+      if(!use_square) {
+         double min_value = -constraint_tolerance * max(abs(ty), zero_tolerance);
+         double max_value = constraint_tolerance * max(abs(ty), zero_tolerance);
+         exprs.emplace_back(gen_abs_range_obj_expr(
+            model, y - ty, format("{}_{}", constr_name, i),
+            min_value, max_value, lazy, use_gurobi, 10
+         ));
+      }
+      else {
+         exprs.emplace_back(gen_approx_square_obj_expr(
+            model, y - ty, format("{}_{}", constr_name, i),
+            lazy, use_gurobi, 10
+         ));
+      }
    }
    return gen_mean_expr(exprs);
 }
 
-template<typename T>
 GRBLinExpr gen_l1w_expr(
-   GRBModel& model, const mat<T> w, const string& constr_name,
+   GRBModel& model, const MatrixRange<GRBVar> auto& w, const string& constr_name,
    int lazy = 0, double constr_tol = 0, bool use_gurobi = false
 ) {
    vec<GRBLinExpr> exprs;
@@ -640,9 +708,24 @@ GRBLinExpr gen_l1w_expr(
    return gen_mean_expr(exprs);
 }
 
-template<typename T>
+GRBLinExpr gen_l2w_expr(
+   GRBModel& model, const MatrixRange<GRBVar> auto& w,
+   const string& constr_name, int lazy = 0, bool use_gurobi = false
+) {
+   vec<GRBLinExpr> exprs;
+   for(const auto& [i, w] : w | views::enumerate) {
+      for(const auto& [j, w] : w | views::enumerate) {
+         exprs.emplace_back(gen_approx_square_obj_expr(
+            model, w, format("{}_{}_{}", constr_name, i, j),
+            lazy, use_gurobi, -10
+         ));
+      }
+   }
+   return gen_mean_expr(exprs);
+}
+
 GRBLinExpr gen_l1a_expr(
-   GRBModel& model, const vec<T>& a, const string& constr_name,
+   GRBModel& model, const GRBLinExprRange auto& a, const string& constr_name,
    int lazy = 0, double constr_tol = 0, bool use_gurobi = false
 ) {
    vec<GRBLinExpr> exprs;
@@ -655,33 +738,56 @@ GRBLinExpr gen_l1a_expr(
    return gen_mean_expr(exprs);
 }
 
-template<typename T>
+GRBLinExpr gen_l2a_expr(
+   GRBModel& model, const GRBLinExprRange auto& a,
+   const string& constr_name, int lazy = 0, bool use_gurobi = false
+) {
+   vec<GRBLinExpr> exprs;
+   for(const auto& [j, a] : a | views::enumerate) {
+      exprs.emplace_back(gen_approx_square_obj_expr(
+         model, a, format("{}_{}", constr_name, j),
+         lazy, use_gurobi, -10
+      ));
+   }
+   return gen_mean_expr(exprs);
+}
+
+
 GRBLinExpr gen_wp_expr(
-   GRBModel& model, const mat<T>& w, const mat<optional<double>>& tw, const string& constr_name,
-   int lazy = 0, double constr_tol = 0, double zero_tolerance = 0.00001, bool use_gurobi = false
+   GRBModel& model, const MatrixRange<GRBVar> auto& w, const MatrixRange<optional<double>> auto& tw,
+   const string& constr_name, int lazy = 0, double constr_tol = 0,
+   double zero_tolerance = 0.00001, bool use_gurobi = false, bool use_square = false
 ) {
    vec<GRBLinExpr> exprs;
    for(const auto& [i, w, tw] : views::zip(views::iota(0), w, tw)) {
       for(const auto& [j, w, tw] : views::zip(views::iota(0), w, tw)) {
          if(tw) {
-            double min_value = -constr_tol * max(abs(*tw), zero_tolerance);
-            double max_value = constr_tol * max(abs(*tw), zero_tolerance);
-            exprs.emplace_back(gen_abs_range_obj_expr(
-               model, w - *tw, format("{}_{}_{}", constr_name, i, j),
-               min_value, max_value, lazy, use_gurobi, 5
-            ));
+            if(!use_square) {
+               double min_value = -constr_tol * max(abs(*tw), zero_tolerance);
+               double max_value = constr_tol * max(abs(*tw), zero_tolerance);
+               exprs.emplace_back(gen_abs_range_obj_expr(
+                  model, w - *tw, format("{}_{}_{}", constr_name, i, j),
+                  min_value, max_value, lazy, use_gurobi, 5
+               ));
+            }
+            else {
+               exprs.emplace_back(gen_approx_square_obj_expr(
+                  model, w - *tw, format("{}_{}_{}", constr_name, i, j),
+                  lazy, use_gurobi, 5
+               ));
+            }
          }
       }
    }
    return gen_mean_expr(exprs);
 }
 
-auto gen_class_count(const ten3<double>& tc_y) {
-   vec<vec<double>> class_count(tc_y.size());
-   for(auto&& [tc_y, class_count] : views::zip(tc_y, class_count)) {
-      class_count = vec<double>(tc_y[0].size(), 0.0);
+auto gen_class_count(const Tensor3Range<double> auto& tc_y) {
+   vec<vec<double>> class_count;
+   for(auto& tc_y : tc_y) {
+      class_count.emplace_back(vec<double>(ranges::distance(*ranges::begin(tc_y)), 0.0));
       for(const auto& tc_y : tc_y) {
-         for(auto&& [tc_y, class_count] : views::zip(tc_y, class_count)) {
+         for(auto&& [tc_y, class_count] : views::zip(tc_y, class_count.back())) {
             class_count += tc_y;
          }
       }
@@ -689,62 +795,59 @@ auto gen_class_count(const ten3<double>& tc_y) {
    return class_count;
 }
 
-auto gen_input_exprs(const vec<double>& fx, const vec<bool>& dropout) {
-   vec<GRBLinExpr> a;
-   for(const auto& [fx, dropout] : views::zip(fx, dropout)) {
-      a.emplace_back(fx * !dropout);
-   }
-   return a;
-}
-
 auto gen_layers(
-   GRBModel& model, int L, const vec<int>& C,
-   const vec<mat<int>>& mask, const vec<mat<int>>& precis, const vec<mat<int>>& D,
-   const vec<mat<optional<double>>>& tw, const vec<optional<double>>& l1w_norm,
-   const vec<optional<double>>& w_pen, int lazy = 1, bool relaxed_model = false,
+   GRBModel& model, int L, const RangeOf<int> auto& C, const Tensor3Range<bool> auto& mask,
+   const Tensor3Range<int> auto& precis, const Tensor3Range<int> auto& D,
+   const Tensor3Range<optional<double>> auto& tw, const RangeOf<optional<double>> auto& l1w_norm,
+   const RangeOf<optional<double>> auto& l2w_norm, const optional<double>& w_pen,
+   const Tensor3Range<bool> auto& fixed, int lazy = 1, bool relaxed_model = false,
    bool use_start = false, bool use_gurobi = false, double zero_off_tolerance = 0.0,
-   double zero_tolerance = 0.000001, double relative_tolerance = 0.0, bool alternative_model = false
+   double zero_tolerance = 0.000001, double relative_tolerance = 0.0,
+   bool alternative_model = false, bool use_square = false, bool no_l1 = false, bool no_l2 = false
 ) {
-   GRBVar zero_var = model.addVar(1, 1, 0, GRB_BINARY, "zero_singleton");
-   set_hint(zero_var, 1, 20);
+   GRBVar one_var = model.addVar(1, 1, 0, GRB_BINARY, "one_singleton");
+   GRBVar zero_var = model.addVar(0, 0, 0, GRB_BINARY, "zero_singleton");
+   set_hint(one_var, 1, 20);
+   set_hint(zero_var, 0, 20);
    if(use_start) {
-      int starts = 1;
+      int starts = 2;
       if(relaxed_model && alternative_model) {
-         starts += 2;
-      }
-      else if(!relaxed_model && alternative_model) {
          starts += 1;
       }
       else if(!relaxed_model && !alternative_model) {
-         starts += 2;
+         starts += 1;
       }
       else if(relaxed_model && !alternative_model) {
-         starts += 4;
+         starts += 2;
       }
       resetline_console();
       cout << "Starts = " << starts << "\n";
       model.set(GRB_IntAttr_NumStart, starts);
       for(int i = 0; i < starts; ++i) {
-         set_start(model, zero_var, i, 1);
+         set_start(model, zero_var, i, 0);
+         set_start(model, one_var, i, 1);
       }
    }
-   ten4<GRBVar> b(L);
-   ten3<GRBVar> iw(L);
-   vec<GRBLinExpr> mask_exprs, l1w_exprs, w_pen_exprs;
-   for(auto&& [k, b, tw, bits, mask, exp, l1w_norm, w_pen, iw] : views::zip(views::iota(0), b, tw, D, mask, precis, l1w_norm, w_pen, iw)) {
+   ten4<GRBVar> b(L); ten3<GRBVar> iw(L);
+   vec<GRBLinExpr> mask_exprs, l1w_exprs, l2w_exprs, w_pen_exprs;
+   for(auto&& [k, b, tw, bits, mask, exp, fixed, l1w_norm, l2w_norm, iw] : views::zip(views::iota(0), b, tw, D, mask, precis, fixed, l1w_norm, l2w_norm, iw)) {
       b = ten3<GRBVar>(C[k] + 1, mat<GRBVar>(C[k + 1]));
       iw = mat<GRBVar>(C[k] + 1, vec<GRBVar>(C[k + 1]));
       mat<GRBVar>    w(C[k] + 1, vec<GRBVar>(C[k + 1]));
-      for(   auto&& [i, b, w, tw, bits, exp, mask, iw] : views::zip(views::iota(0), b, w, tw, bits, exp, mask, iw)) {
-         for(auto&& [j, b, w, tw, bits, exp, mask, iw] : views::zip(views::iota(0), b, w, tw, bits, exp, mask, iw)) {
+      for(   auto&& [i, b, w, tw, bits, exp, mask, fixed, iw] : views::zip(views::iota(0), b, w, tw, bits, exp, mask, fixed, iw)) {
+         for(auto&& [j, b, w, tw, bits, exp, mask, fixed, iw] : views::zip(views::iota(0), b, w, tw, bits, exp, mask, fixed, iw)) {
             if(!tw) {
                model.set(GRB_IntAttr_NumStart, 1);
             }
             const auto& [bin_floor, bin_ceil] = decompose_w(tw, bits + 1);
             b = vec<GRBVar>(bits + 1);
-            if(!relaxed_model && mask == 0) {
-               ranges::fill(b, zero_var);
+            if(fixed) {
+               ranges::fill(b, one_var);
                iw = zero_var;
+            }
+            else if(!relaxed_model && !mask) {
+               ranges::fill(b, one_var);
+               iw = one_var;
             }
             else {
                for(auto&& [l, b, bf, bc] : views::zip(views::iota(0), b, bin_floor, bin_ceil)) {
@@ -787,7 +890,7 @@ auto gen_layers(
                   }
                }
                else {
-                  iw = zero_var;
+                  iw = one_var;
                }
             }
             w = gen_w_var(
@@ -795,13 +898,21 @@ auto gen_layers(
                format("w_{}_{}_{}", k, i, j),
                exp, 0, tw.value_or(0.0) * (1 - iw)
             );
-            if(relaxed_model && mask == 0) {
-               mask_exprs.emplace_back(gen_abs_range_obj_expr(
-                  model, w, format("mask_{}_{}_{}", k, i, j),
-                  -zero_off_tolerance, zero_off_tolerance, lazy, use_gurobi, 5
-               ));
+            if(relaxed_model && !mask) {
+               if(!use_square) {
+                  mask_exprs.emplace_back(gen_abs_range_obj_expr(
+                     model, w, format("mask_{}_{}_{}", k, i, j),
+                     -zero_off_tolerance, zero_off_tolerance, lazy, use_gurobi, 5
+                  ));
+               }
+               else {
+                  mask_exprs.emplace_back(gen_approx_square_obj_expr(
+                     model, w, format("mask_{}_{}_{}", k, i, j),
+                     lazy, use_gurobi, 5
+                  ));
+               }
             }
-            else if(!relaxed_model && mask == 0) {
+            else if(!relaxed_model && !mask) {
                w.set(GRB_DoubleAttr_LB, 0);
                w.set(GRB_DoubleAttr_UB, 0);
                set_hint(w, 0, 10);
@@ -832,74 +943,65 @@ auto gen_layers(
          w_pen_exprs.emplace_back(*w_pen * gen_wp_expr(
             model, w, tw,
             format("wp_{}", k),
-            lazy, relative_tolerance, zero_tolerance, use_gurobi
+            lazy, relative_tolerance, zero_tolerance,
+            use_gurobi, use_square
          ));
       }
-      if(l1w_norm && k + 1 < L) {
+      if(!no_l1 && l1w_norm && k + 1 < L) {
          l1w_exprs.emplace_back(*l1w_norm * gen_l1w_expr(
             model, w, 
             format("l1w_{}", k),
             lazy, zero_off_tolerance, use_gurobi
          ));
       }
+      
+      if(!no_l2 && l2w_norm && k + 1 < L) {
+         l2w_exprs.emplace_back(*l2w_norm * gen_l2w_expr(
+            model, w, 
+            format("l2w_{}", k),
+            lazy, use_gurobi
+         ));
+      }
    }
-   return make_tuple(b, mask_exprs, l1w_exprs, w_pen_exprs, iw);
+   return make_tuple(b, mask_exprs, l1w_exprs, l2w_exprs, w_pen_exprs, iw);
 }
 
 auto gen_dropout_exprs(
-   GRBModel& model, const vec<GRBLinExpr>& a, const vec<bool>& dropout,
+   GRBModel& model, const GRBLinExprRange auto& a, const RangeOf<bool> auto& dropout,
    const string& constr_name, bool relaxed_model = false, int lazy = 1,
    double dropout_tolerance = 0.0, bool use_gurobi = true
 ) {
-   GRBLinExpr obj_expr;
-   vec<GRBLinExpr> a_exprs;
+   GRBLinExpr obj_expr; vec<GRBLinExpr> a_exprs;
    if(relaxed_model) {
-      vec<GRBLinExpr> pen_dropout_exprs;
-      ranges::move(
-         views::zip(views::iota(0), a, dropout) | views::filter(
-            [] (const auto& tup) {
-               const auto& [i, a, dropout] = tup;
-               return !dropout;
-            }
-         ) | views::transform(
-            [&model, &dropout_tolerance, &lazy, &use_gurobi, &constr_name]
-            (const auto& tup) {
-               const auto& [i, a, dropout] = tup;
-               return gen_abs_range_obj_expr(
-                  model, a, format("{}_{}", constr_name, i),
-                  -dropout_tolerance, dropout_tolerance, lazy, use_gurobi, 5
-               );
-            }
-         ), back_inserter(pen_dropout_exprs)
-      );
-      obj_expr = gen_mean_expr(pen_dropout_exprs);
-      ranges::move(a, back_inserter(a_exprs));
+      vec<GRBLinExpr> pen_dropout;
+      for(const auto& [i, a, dropout] : views::zip(views::iota(0), a, dropout)) {
+         if(dropout) {
+            pen_dropout.emplace_back(gen_abs_range_obj_expr(
+               model, a, format("{}_{}", constr_name, i),
+               -dropout_tolerance, dropout_tolerance, lazy, use_gurobi, 5
+            ));
+         }
+         a_exprs.emplace_back(a);
+      }
+      obj_expr = gen_mean_expr(pen_dropout);
    }
    else {
-      ranges::move(
-         views::zip_transform(
-            [] (const GRBLinExpr& a, bool dropout) {
-               if(!dropout) {
-                  return a;
-               }
-               return GRBLinExpr();
-            }, a, dropout
-         ), back_inserter(a_exprs)
-      );
+      for(const auto& [a, dropout] : views::zip(a , dropout)) {
+         a_exprs.emplace_back(dropout ? GRBLinExpr() : GRBLinExpr(a));
+      }
    }
    return make_tuple(a_exprs, obj_expr);
 }
 
 auto gen_connection_dropout_exprs(
-   GRBModel& model, const vec<GRBLinExpr>& a, const ten3<GRBVar>& b,
-   int n, int m, const mat<bool>& c_drop, const mat<int>& mask,
-   const mat<int>& exp, const mat<optional<double>>& tw, const mat<GRBVar>& iw,
-   const string& constr_name, bool relaxed_model = false, int lazy = 1,
-   double dropout_tolerance = 0.0, bool use_gurobi = true,
-   bool alternative_model = false
+   GRBModel& model, const GRBLinExprRange auto& a, const Tensor3Range<GRBVar> auto& b,
+   int n, int m, const MatrixRange<bool> auto& c_drop, const MatrixRange<bool> auto& mask,
+   const MatrixRange<int> auto& exp, const MatrixRange<optional<double>> auto& tw,
+   const MatrixRange<GRBVar> auto& iw, const string& constr_name, bool relaxed_model = false,
+   int lazy = 1, double dropout_tolerance = 0.0, bool use_gurobi = true,
+   bool alternative_model = false, bool use_square = false
 ) {
-   GRBLinExpr obj_expr;
-   mat<GRBLinExpr> aw_exprs(m, vec<GRBLinExpr>(n + 1));
+   GRBLinExpr obj_expr; mat<GRBLinExpr> aw_exprs(m, vec<GRBLinExpr>(n + 1));
    if(relaxed_model) {
       vec<GRBLinExpr> pen_dropout_exprs;
       for(const auto& [i, b, a, exp, c_drop, mask, tw, iw] : views::zip(views::iota(0), b, a, exp, c_drop, mask, tw, iw)) {
@@ -921,10 +1023,19 @@ auto gen_connection_dropout_exprs(
             }
             aw_exprs[j][i] += gen_act_w_expr(bin_w);
             if(c_drop) {
-               pen_dropout_exprs.emplace_back(gen_abs_range_obj_expr(
-                  model, aw_exprs[j][i], format("{}_{}_{}_condrop", constr_name, i, j),
-                  -dropout_tolerance, dropout_tolerance, lazy, use_gurobi, 5
-               ));
+               if(!use_square) {
+                  pen_dropout_exprs.emplace_back(gen_abs_range_obj_expr(
+                     model, aw_exprs[j][i], format("{}_{}_{}_condrop", constr_name, i, j),
+                     -dropout_tolerance, dropout_tolerance, lazy, use_gurobi, 5
+                  ));
+               }
+               else {
+                  pen_dropout_exprs.emplace_back(gen_approx_square_obj_expr(
+                     model, aw_exprs[j][i],
+                     format("{}_{}_{}_condrop", constr_name, i, j),
+                     lazy, use_gurobi, 5
+                  ));
+               }
             }
          }
       }
@@ -932,7 +1043,7 @@ auto gen_connection_dropout_exprs(
    else {
       for(const auto& [i, b, a, exp, c_drop, mask, tw, iw] : views::zip(views::iota(0), b, a, exp, c_drop, mask, tw, iw)) {
          for(const auto& [j, b, exp, c_drop, mask, tw, iw] : views::zip(views::iota(0), b,    exp, c_drop, mask, tw, iw)) {
-            if(mask != 0 && !c_drop) {
+            if(mask && !c_drop) {
                if(tw && alternative_model) {
                   aw_exprs[j][i] += gen_bin_w_var(
                      model, iw, a,
@@ -953,32 +1064,35 @@ auto gen_connection_dropout_exprs(
          }
       }
    }
-   vec<GRBLinExpr> z;
-   ranges::move(aw_exprs | views::transform(gen_sum_expr<GRBLinExpr>), back_inserter(z));
-   return make_tuple(z, obj_expr);
+   const auto& z = aw_exprs | views::transform(gen_sum_expr<decltype(aw_exprs)::value_type>) | views::common;
+   return make_tuple(vec<GRBLinExpr>(z.begin(), z.end()), obj_expr);
 }
 
-GRBModel get_model(
-   const GRBEnv& environment, int T, int L, const vec<int>& C, const vec<string>& AF, 
-   const vec<mat<int>>& mask, const vec<mat<int>>& precis, const vec<mat<int>>& D,
-   const vec<mat<optional<double>>>& tw, const vec<double>& bias_w, const mat<double>& leakyReLU_coef,
-   const vec<pair<double,double>>& hardtanh_limits, const vec<vec<bool>>& dropout,
-   const vec<optional<double>>& l1a_norm, const vec<optional<double>>& l1w_norm,
-   const vec<optional<double>>& w_pen, const vec<mat<bool>>& c_drop, const mat<double>& fx,
-   const vec<mat<double>>& reg_ty, const vec<mat<double>>& class_ty,
-   double zero_tolerance = 0.000000000001, double relaxed_frac = 0.0,
-   double relative_tolerance = 0.1, int lazy = 1, bool relaxed_model = false,
+auto get_model(
+   const GRBEnv& environment, int T, int L, const RangeOf<int> auto& C, const RangeOf<string> auto& AF, 
+   const Tensor3Range<bool> auto& mask, const Tensor3Range<int> auto& precis, const Tensor3Range<int> auto& D,
+   const Tensor3Range<optional<double>> auto& tw, const RangeOf<double> auto& bias_w,
+   const MatrixRange<double> auto& leakyReLU_coef, const RangeOf<pair<double,double>> auto& hardtanh_limits,
+   const MatrixRange<bool> auto& dropout, const RangeOf<optional<double>> auto& l1a_norm,
+   const RangeOf<optional<double>> auto& l1w_norm, const RangeOf<optional<double>> auto& l2a_norm,
+   const RangeOf<optional<double>> auto& l2w_norm, const optional<double>& w_pen,
+   const Tensor3Range<bool> auto& fixed, const Tensor3Range<bool> auto& c_drop,
+   const MatrixRange<double> auto& fx, const Tensor3Range<double> auto& reg_ty,
+   const Tensor3Range<double> auto& class_ty, double zero_tolerance = 0.000000000001,
+   double relaxed_frac = 0.0, double relative_tolerance = 0.1, int lazy = 1, bool relaxed_model = false,
    double error_priority = 1.0, bool use_start = false, bool use_gurobi = false, bool use_sos = false,
-   double zero_off_tolerance = 0.0, bool alternative_model = false
+   double zero_off_tolerance = 0.0, bool alternative_model = false, bool use_square = false,
+   bool no_l1 = false, bool no_l2 = false
 ) {
    GRBModel model(environment);
    resetline_console();
    cout << "Processing layers variables..." << flush;
-   const auto& [b, mask_exprs, l1w_exprs, w_pen_exprs, iw] = gen_layers(
-      model, L, C, mask, precis, D, tw, l1w_norm, w_pen, lazy, relaxed_model, use_start, use_gurobi,
-      zero_off_tolerance, zero_tolerance, relative_tolerance, alternative_model
+   const auto& [b, mask_exprs, l1w_exprs, l2w_exprs, w_pen_exprs, iw] = gen_layers(
+      model, L, C, mask, precis, D, tw, l1w_norm, l2w_norm, w_pen, fixed, lazy, relaxed_model, use_start,
+      use_gurobi, zero_off_tolerance, zero_tolerance, relative_tolerance, alternative_model, use_square,
+      no_l1, no_l2
    );
-   vec<GRBLinExpr> dropout_exprs, c_drop_exprs, l1a_exprs, target_exprs;
+   vec<GRBLinExpr> dropout_exprs, c_drop_exprs, l1a_exprs, l2a_exprs, target_exprs;
    auto class_count = gen_class_count(class_ty);
    int relaxed_size = relaxed_frac * T;
    for(const auto& [t, fx] : fx | views::enumerate) {
@@ -986,9 +1100,9 @@ GRBModel get_model(
       cout << "Processing case: " << t << "...\n" << flush;
       vec<GRBLinExpr> a;
       ranges::copy(fx, back_inserter(a));
-      vec<GRBLinExpr> case_l1a_exprs, case_target_exprs;
-      for(const auto& [k, b, AF, exp, dropout, leakyReLU_coef, hardtanh_limits, c_drop, l1a_norm, bias_w, mask, tw, iw] : views::zip(
-         views::iota(0), b, AF, precis, dropout, leakyReLU_coef, hardtanh_limits, c_drop, l1a_norm, bias_w, mask, tw, iw
+      vec<GRBLinExpr> case_l1a_exprs, case_l2a_exprs, case_target_exprs;
+      for(const auto& [k, b, AF, exp, dropout, leakyReLU_coef, hardtanh_limits, c_drop, l1a_norm, l2a_norm, bias_w, mask, tw, iw] : views::zip(
+         views::iota(0), b, AF, precis, dropout, leakyReLU_coef, hardtanh_limits, c_drop, l1a_norm, l2a_norm, bias_w, mask, tw, iw
       )) {
          resetline_console();
          cout << "Processing layer: " << k << "..." << flush;
@@ -1005,15 +1119,19 @@ GRBModel get_model(
          );
          c_drop_exprs.emplace_back(c_drop_expr);
          a = gen_activation_exprs(
-            model, AF, z,
-            format("act_{}_{}", t, k),
-            leakyReLU_coef, hardtanh_limits, lazy, use_gurobi, use_sos
+            model, AF, z, format("act_{}_{}", t, k), leakyReLU_coef,
+            hardtanh_limits, lazy, use_gurobi, use_sos
          );
-         if(l1a_norm && k + 1 < L) {
+         if(!no_l1 &&l1a_norm && k + 1 < L) {
             case_l1a_exprs.emplace_back(*l1a_norm * gen_l1a_expr(
-               model, a,
-               format("l1a_{}_{}", t, k),
+               model, a, format("l1a_{}_{}", t, k),
                lazy, zero_off_tolerance, use_gurobi
+            ));
+         }
+         if(!no_l2 && l2a_norm && k + 1 < L) {
+            case_l2a_exprs.emplace_back(*l2a_norm * gen_l2a_expr(
+               model, a, format("l2a_{}_{}", t, k),
+               lazy, use_gurobi
             ));
          }
       }
@@ -1034,15 +1152,21 @@ GRBModel get_model(
       for(const auto& [ti, reg_ty] : reg_ty | views::enumerate) {
          if (reg_ty[t].size() > 0) {
             vec<GRBLinExpr> ty;
-            ranges::move(a | views::drop(size_accumulated) | views::take(reg_ty[t].size()), back_inserter(ty));
+            ranges::move(
+               a | views::drop(size_accumulated) |
+               views::take(reg_ty[t].size()), back_inserter(ty)
+            );
             case_target_exprs.emplace_back(gen_regression_error_expr(
                model, ty,
                format("reg_{}_{}", t, ti),
                reg_ty[t], zero_tolerance, t < relaxed_size ? relative_tolerance : 0.0,
-               lazy, use_gurobi
+               lazy, use_gurobi, use_square
             ));
             size_accumulated += reg_ty[t].size();
          }
+      }
+      if(case_l2a_exprs.size() > 0) {
+         l2a_exprs.emplace_back(gen_mean_expr(case_l2a_exprs));
       }
       if(case_l1a_exprs.size() > 0) {
          l1a_exprs.emplace_back(gen_mean_expr(case_l1a_exprs));
@@ -1054,9 +1178,13 @@ GRBModel get_model(
    }
    cursorup_console(1);
    model.setObjective(
-      T * L * (error_priority * gen_mean_expr(target_exprs) +
-      gen_mean_expr(l1a_exprs) + gen_mean_expr(l1w_exprs) + gen_mean_expr(w_pen_exprs) + 
-      gen_mean_expr(dropout_exprs) + gen_mean_expr(c_drop_exprs) + gen_mean_expr(mask_exprs)),
+      T * L * (
+         error_priority * gen_mean_expr(target_exprs) +
+         gen_mean_expr(l1a_exprs) + gen_mean_expr(l1w_exprs) +
+         gen_mean_expr(l2a_exprs) + gen_mean_expr(l2w_exprs) +
+         gen_mean_expr(w_pen_exprs) + gen_mean_expr(dropout_exprs) +
+         gen_mean_expr(c_drop_exprs) + gen_mean_expr(mask_exprs)
+      ),
       GRB_MINIMIZE
    );
    return model;
@@ -1067,31 +1195,34 @@ GRBModel get_model(
 /// 
 
 template<typename G>
+auto gen_dropout_func(G&& generator, const optional<double>& dropout) {
+   return [&generator, &dropout] () {
+      return dropout.transform([&generator] (double dropout) {
+         return bernoulli_distribution(dropout)(generator);
+      }).value_or(false);
+   };
+}
+
+template<typename G>
 auto generate_dropouts(
-   const vec<int>& capacity,
-   const vec<optional<double>>& dropout,
-   const vec<optional<double>>& connection_dropout,
-   G&& generator
+   const RangeOf<int> auto& capacity, const RangeOf<optional<double>> auto& dropout,
+   const RangeOf<optional<double>> auto& connection_dropout, G&& generator, bool no_dropouts = false
 ) {
    vec<vec<bool>> dropout_bool(dropout.size());
    vec<mat<bool>> c_dropout_bool(connection_dropout.size());
    for(auto&& [k, db, pd, cdb, cpd] : views::zip(
       views::iota(0), dropout_bool, dropout, c_dropout_bool, connection_dropout
    )) {
-      db = vec<bool>(capacity[k] + 1);
-      ranges::generate(db, [&generator, &pd] () {
-         return pd.transform([&generator](double dropout) {
-            return bernoulli_distribution(dropout)(generator);
-         }).value_or(false);
-      });
+      db = vec<bool>(capacity[k] + 1, false);
       cdb = mat<bool>(capacity[k] + 1);
-      for(auto&& cdb : cdb) {
-         cdb = vec<bool>(capacity[k + 1]);
-         ranges::generate(cdb, [&generator, &cpd] () {
-            return cpd.transform([&generator](double dropout) {
-               return bernoulli_distribution(dropout)(generator);
-            }).value_or(false);
-         });
+      if(!no_dropouts) {
+         ranges::generate(db, gen_dropout_func(generator, pd));
+      }
+      for(auto& cdb : cdb) {
+         cdb = vec<bool>(capacity[k + 1], false);
+         if(!no_dropouts) {
+            ranges::generate(cdb, gen_dropout_func(generator, cpd));
+         }
       }
    }
    return make_tuple(dropout_bool, c_dropout_bool);
@@ -1099,15 +1230,13 @@ auto generate_dropouts(
 
 template<typename T>
 auto read_matrix_from_csv(istream& input, bool ignore_header = false, bool ignore_index = false) {
-   string line;
+   mat<T> matrix; string line;
    if(ignore_header) {
       getline(input, line);
    }
-   mat<T> matrix;
    while(getline(input, line)) {
-      vec<T> vector;
       ranges::replace(line, ',', ' ');
-      stringstream line_stream(line);
+      vec<T> vector; stringstream line_stream(line);
       ranges::move(
          views::istream<T>(line_stream) | views::drop(ignore_index),
          back_inserter(vector)
@@ -1124,25 +1253,22 @@ auto read_matrix_from_csv(istream&& input, bool ignore_header = false, bool igno
 
 template<typename T>
 auto read_list_from_csv(istream& input, bool ignore_index = false) {
-   string line;
+   string line; vec<vec<int>> dim_list; vec<vec<T>> data_list;
    getline(input, line);
    ranges::replace(line, ',', ' ');
    stringstream line_stream(line);
    int max_dim = ranges::distance(
-      views::istream<string>(line_stream) |
-      views::drop(ignore_index) | views::take_while([] (const string& str) {
+      views::istream<string>(line_stream) | views::drop(ignore_index) |
+      views::take_while([] (const string& str) {
          return str.starts_with("d_");
       })
    );
-   vec<vec<int>> dim_list;
-   vec<vec<T>> data_list;
    while(getline(input, line)) {
       ranges::replace(line, ',', ' ');
-      line_stream = stringstream(line);
-      vec<int> dim;
+      stringstream line_stream(line); vec<int> dim;
       ranges::move(
-         views::istream<int>(line_stream) | views::drop(ignore_index) | views::take(max_dim),
-         back_inserter(dim)
+         views::istream<int>(line_stream) | views::drop(ignore_index) |
+         views::take(max_dim), back_inserter(dim)
       );
       vec<T> data;
       ranges::move(
@@ -1161,24 +1287,18 @@ auto read_list_from_csv(istream&& input, bool ignore_index = false) {
 }
 
 auto read_arch(istream& input, bool ignore_index = false, bool ignore_header = true) {
-   string line, word;
-   stringstream line_stream, word_stream;
+   string line, word; vec<optional<double>> Drop, L1w, L1a, L2w, L2a, c_drop;
+   vec<int> C; vec<string> AF; vec<double> bias; vec<pair<double,double>> HT;
    if(ignore_header) {
       getline(input, line);
    }
-   vec<int> C;
-   vec<string> AF;
-   vec<double> bias;
-   vec<pair<double,double>> HT;
-   vec<optional<double>> Drop, L1w, L1a, w_pen, c_drop;
    while(getline(input, line)) {
-      line_stream = stringstream(line);
+      stringstream line_stream(line);
       if(ignore_index) {
          getline(line_stream, word, ',');
       }
-      int k;
-      optional<double> l1a, l1w, drop, b, ht_min, ht_max, wp, cd;
-      optional<string> af;
+      int k; optional<string> af;
+      optional<double> l1a, l1w, l2a, l2w, drop, b, ht_min, ht_max, cd;
       getline(line_stream, word, ','); stringstream(word) >> k;
       getline(line_stream, word, ','); stringstream(word) >> af;
       getline(line_stream, word, ','); stringstream(word) >> drop;
@@ -1186,8 +1306,9 @@ auto read_arch(istream& input, bool ignore_index = false, bool ignore_header = t
       getline(line_stream, word, ','); stringstream(word) >> ht_max;
       getline(line_stream, word, ','); stringstream(word) >> l1w;
       getline(line_stream, word, ','); stringstream(word) >> l1a;
+      getline(line_stream, word, ','); stringstream(word) >> l2w;
+      getline(line_stream, word, ','); stringstream(word) >> l2a;
       getline(line_stream, word, ','); stringstream(word) >> b;
-      getline(line_stream, word, ','); stringstream(word) >> wp;
       getline(line_stream, word, ','); stringstream(word) >> cd;
       C.emplace_back(k);
       AF.emplace_back(af.value_or("None"));
@@ -1195,11 +1316,12 @@ auto read_arch(istream& input, bool ignore_index = false, bool ignore_header = t
       HT.emplace_back(make_pair(ht_min.value_or(-1), ht_max.value_or(1)));
       L1w.emplace_back(l1w);
       L1a.emplace_back(l1a);
+      L2w.emplace_back(l2w);
+      L2a.emplace_back(l2a);
       bias.emplace_back(b.value_or(1.0));
-      w_pen.emplace_back(wp);
       c_drop.emplace_back(cd);
    }
-   return make_tuple(C, AF, Drop, HT, L1w, L1a, bias, w_pen, c_drop);
+   return make_tuple(C, AF, Drop, HT, L1w, L1a, L2w, L2a, bias, c_drop);
 }
 
 auto read_arch(istream&& input, bool ignore_index = false, bool ignore_header = true) {
@@ -1207,62 +1329,45 @@ auto read_arch(istream&& input, bool ignore_index = false, bool ignore_header = 
 }
 
 template<typename R, typename T>
-auto get_layers_matrix(const mat<int>& dim, const vec<vec<T>>& data) {
+auto get_layers_matrix(const RangeOf<vec<int>> auto& dim, const MatrixRange<T> auto& data) {
    vec<mat<R>> layers_data;
    for(const auto& [dim, data] : views::zip(dim, data)) {
       int n = dim[0], m = dim[1];
       mat<R> layer_data(n);
       for(int i = 0; i < n; ++i) {
-         ranges::copy(data | views::drop(i * m) | views::take(m), back_inserter(layer_data[i]));
+         ranges::copy(
+            data | views::drop(i * m) | views::take(m),
+            back_inserter(layer_data[i])
+         );
       }
       layers_data.emplace_back(layer_data);
    }
    return layers_data;
 }
 
-variant< unordered_map< string, vec<string> >, string > process_opts(int argc, const char* argv[]) {
-   const unordered_map< string, int > opts = {
+template<typename T>
+auto clamp_layers_matrix(const Tensor3Range<T> auto& layers_matrix, T min_value, T max_value) {
+   ten3<T> result(ranges::distance(layers_matrix));
+   for(auto&& [a, b] : views::zip(result, layers_matrix)) {
+      a = mat<T>(ranges::distance(b));
+      for(auto&& [a, b] : views::zip(a, b)) {
+         a = vec<T>(ranges::distance(b));
+         for(auto&& [a, b] : views::zip(a, b)) {
+            a = min(max_value, max(min_value, b));
+         }
+      }
+   }
+   return result;
+}
+
+variant< unordered_map< string, vec<string> >, string > process_opts(
+   int argc, const char* argv[]
+) {
+   const static unordered_map< string, int > opts = {
       {"load_path",         1},
       {"load_name",         1},
       {"save_path",         1},
       {"save_name",         1},
-      {"time_limit",        1},
-      {"solution_limit",    1},
-      {"iteration_limit",   1},
-      {"node_limit",        1},
-      {"opt_tol",           1},
-      {"best_obj_stop",     1},
-      {"feas_tol",          1},
-      {"int_feas_tol",      1},
-      {"con_method",        1},
-      {"con_jobs",          1},
-      {"heuristics",        1},
-      {"imp_start_gap",     1},
-      {"imp_start_nodes",   1},
-      {"imp_start_time",    1},
-      {"method",            1},
-      {"cuts",              1},
-      {"min_rel_nodes",     1},
-      {"mip_focus",         1},
-      {"node_method",       1},
-      {"pre_dep_row",       1},
-      {"pre_dual",          1},
-      {"pre_passes",        1},
-      {"presolve",          1},
-      {"pump_passes",       1},
-      {"branch_dir",        1},
-      {"agg_fill",          1},
-      {"aggregate",         1},
-      {"disconnected",      1},
-      {"var_branch",        1},
-      {"rins",              1},
-      {"sifting",           1},
-      {"sift_method",       1},
-      {"soft_mem_limit",    1},
-      {"start_node_limit",  1},
-      {"submip_nodes",      1},
-      {"symmetry",          1},
-      {"threads",           1},
       {"no_log_to_console", 0},
       {"no_save_sols",      0},
       {"no_save_log",       0},
@@ -1275,7 +1380,11 @@ variant< unordered_map< string, vec<string> >, string > process_opts(int argc, c
       {"use_exp",           0},
       {"use_mask",          0},
       {"use_lrelu",         0},
+      {"use_fixed",         0},
       {"use_bits",          0},
+      {"no_l1",             0},
+      {"no_l2",             0},
+      {"no_dropouts",       0},
       {"zero_tol",          1},
       {"constr_tol",        1},
       {"relaxed_frac",      1},
@@ -1286,8 +1395,14 @@ variant< unordered_map< string, vec<string> >, string > process_opts(int argc, c
       {"gurobi_constrs",    0},
       {"alternative_model", 0},
       {"use_sos",           0},
+      {"use_square",        0},
+      {"min_bits",          1},
+      {"max_bits",          1},
+      {"min_exp",           1},
+      {"max_exp",           1},
       {"lazy",              1},
       {"zero_off_tol",      1},
+      {"weight_penalty",    1},
       {"seed",              1}
    };
    unordered_map< string, vec<string> > processed_opts;
@@ -1296,10 +1411,10 @@ variant< unordered_map< string, vec<string> >, string > process_opts(int argc, c
       if(string arg = argv[argi]; !arg.starts_with("--")) {
          return format("Error: {} no es una opcion", arg);
       }
-      else if(string arg_name = arg.substr(2); !opts.contains(arg_name)) {
+      else if(string arg_name = arg.substr(2); !opts.contains(arg_name) && !arg_name.starts_with("GRB")) {
          return format("Error: No existe la opcion {}", arg_name);
       }
-      else if(int max_argi = argi + opts.at(arg_name); max_argi >= argc) {
+      else if(int max_argi = argi + (arg_name.starts_with("GRB") ? 1 : opts.at(arg_name)); max_argi >= argc) {
          return format("Error: Faltaron {} argumentos", max_argi - argc + 1);
       }
       else {
@@ -1318,6 +1433,123 @@ variant< unordered_map< string, vec<string> >, string > process_opts(int argc, c
       }
    }
    return processed_opts;
+}
+
+void process_env(GRBEnv& env, const unordered_map< string, vec<string> >& processed_opts) {
+   const static unordered_map< string, GRB_IntParam > grb_int_params = {
+      {"SolutionLimit",    GRB_IntParam_SolutionLimit   }, {"Method",             GRB_IntParam_Method            },
+      {"ConcurrentMethod", GRB_IntParam_ConcurrentMethod}, {"ScaleFlag",          GRB_IntParam_ScaleFlag         },
+      {"SimplexPricing",   GRB_IntParam_SimplexPricing  }, {"Quad",               GRB_IntParam_Quad              },
+      {"NormAdjust",       GRB_IntParam_NormAdjust      }, {"Sifting",            GRB_IntParam_Sifting           },
+      {"SiftMethod",       GRB_IntParam_SiftMethod      }, {"NetworkAlg",         GRB_IntParam_NetworkAlg        },
+      {"LPWarmStart",      GRB_IntParam_LPWarmStart     }, {"SubMIPNodes",        GRB_IntParam_SubMIPNodes       },
+      {"VarBranch",        GRB_IntParam_VarBranch       }, {"Cuts",               GRB_IntParam_Cuts              },
+      {"CliqueCuts",       GRB_IntParam_CliqueCuts      }, {"CoverCuts",          GRB_IntParam_CoverCuts         },
+      {"FlowCoverCuts",    GRB_IntParam_FlowCoverCuts   }, {"FlowPathCuts",       GRB_IntParam_FlowPathCuts      },
+      {"GUBCoverCuts",     GRB_IntParam_GUBCoverCuts    }, {"ImpliedCuts",        GRB_IntParam_ImpliedCuts       },
+      /*{"DualImpliedCuts",  GRB_IntParam_DualImpliedCuts },*/ {"ProjImpliedCuts",    GRB_IntParam_ProjImpliedCuts   },
+      {"MIPSepCuts",       GRB_IntParam_MIPSepCuts      }, {"MIRCuts",            GRB_IntParam_MIRCuts           },
+      {"StrongCGCuts",     GRB_IntParam_StrongCGCuts    }, {"ModKCuts",           GRB_IntParam_ModKCuts          },
+      {"ZeroHalfCuts",     GRB_IntParam_ZeroHalfCuts    }, {"NetworkCuts",        GRB_IntParam_NetworkCuts       },
+      {"SubMIPCuts",       GRB_IntParam_SubMIPCuts      }, {"InfProofCuts",       GRB_IntParam_InfProofCuts      },
+      {"RelaxLiftCuts",    GRB_IntParam_RelaxLiftCuts   }, {"RLTCuts",            GRB_IntParam_RLTCuts           },
+      {"BQPCuts",          GRB_IntParam_BQPCuts         }, {"PSDCuts",            GRB_IntParam_PSDCuts           },
+      {"LiftProjectCuts",  GRB_IntParam_LiftProjectCuts }, {"MixingCuts",         GRB_IntParam_MixingCuts        },
+      {"CutAggPasses",     GRB_IntParam_CutAggPasses    }, {"CutPasses",          GRB_IntParam_CutPasses         },
+      {"GomoryPasses",     GRB_IntParam_GomoryPasses    }, {"NodeMethod",         GRB_IntParam_NodeMethod        },
+      {"Presolve",         GRB_IntParam_Presolve        }, {"Aggregate",          GRB_IntParam_Aggregate         },
+      {"IISMethod",        GRB_IntParam_IISMethod       }, {"PreCrush",           GRB_IntParam_PreCrush          },
+      {"PreDepRow",        GRB_IntParam_PreDepRow       }, {"PrePasses",          GRB_IntParam_PrePasses         },
+      {"DisplayInterval",  GRB_IntParam_DisplayInterval }, {"OutputFlag",         GRB_IntParam_OutputFlag        },
+      {"Threads",          GRB_IntParam_Threads         }, {"BarIterLimit",       GRB_IntParam_BarIterLimit      },
+      {"Crossover",        GRB_IntParam_Crossover       }, {"CrossoverBasis",     GRB_IntParam_CrossoverBasis    },
+      {"BarCorrectors",    GRB_IntParam_BarCorrectors   }, {"BarOrder",           GRB_IntParam_BarOrder          },
+      {"PumpPasses",       GRB_IntParam_PumpPasses      }, {"RINS",               GRB_IntParam_RINS              },
+      {"Symmetry",         GRB_IntParam_Symmetry        }, {"MIPFocus",           GRB_IntParam_MIPFocus          },
+      {"NumericFocus",     GRB_IntParam_NumericFocus    }, {"AggFill",            GRB_IntParam_AggFill           },
+      {"PreDual",          GRB_IntParam_PreDual         }, {"SolutionNumber",     GRB_IntParam_SolutionNumber    },
+      {"MinRelNodes",      GRB_IntParam_MinRelNodes     }, {"ZeroObjNodes",       GRB_IntParam_ZeroObjNodes      },
+      {"BranchDir",        GRB_IntParam_BranchDir       }, {"DegenMoves",         GRB_IntParam_DegenMoves        },
+      {"InfUnbdInfo",      GRB_IntParam_InfUnbdInfo     }, {"DualReductions",     GRB_IntParam_DualReductions    },
+      {"BarHomogeneous",   GRB_IntParam_BarHomogeneous  }, {"PreQLinearize",      GRB_IntParam_PreQLinearize     },
+      {"MIQCPMethod",      GRB_IntParam_MIQCPMethod     }, {"NonConvex",          GRB_IntParam_NonConvex         },
+      {"QCPDual",          GRB_IntParam_QCPDual         }, {"LogToConsole",       GRB_IntParam_LogToConsole      },
+      {"PreSOS1Encoding",  GRB_IntParam_PreSOS1Encoding }, {"PreSOS2Encoding",    GRB_IntParam_PreSOS2Encoding   },
+      {"PreSparsify",      GRB_IntParam_PreSparsify     }, {"PreMIQCPForm",       GRB_IntParam_PreMIQCPForm      },
+      {"Seed",             GRB_IntParam_Seed            }, {"ConcurrentMIP",      GRB_IntParam_ConcurrentMIP     },
+      {"ConcurrentJobs",   GRB_IntParam_ConcurrentJobs  }, {"DistributedMIPJobs", GRB_IntParam_DistributedMIPJobs},
+      {"LazyConstraints",  GRB_IntParam_LazyConstraints }, {"TuneResults",        GRB_IntParam_TuneResults       },
+      {"TuneTrials",       GRB_IntParam_TuneTrials      }, {"TuneOutput",         GRB_IntParam_TuneOutput        },
+      {"TuneJobs",         GRB_IntParam_TuneJobs        }, {"TuneCriterion",      GRB_IntParam_TuneCriterion     },
+      {"TuneMetric",       GRB_IntParam_TuneMetric      }, {"TuneDynamicJobs",    GRB_IntParam_TuneDynamicJobs   },
+      {"Disconnected",     GRB_IntParam_Disconnected    }, {"UpdateMode",         GRB_IntParam_UpdateMode        },
+      {"Record",           GRB_IntParam_Record          }, {"ObjNumber",          GRB_IntParam_ObjNumber         },
+      {"MultiObjMethod",   GRB_IntParam_MultiObjMethod  }, {"MultiObjPre",        GRB_IntParam_MultiObjPre       },
+      {"PoolSolutions",    GRB_IntParam_PoolSolutions   }, {"PoolSearchMode",     GRB_IntParam_PoolSearchMode    },
+      {"ScenarioNumber",   GRB_IntParam_ScenarioNumber  }, {"StartNumber",        GRB_IntParam_StartNumber       },
+      {"StartNodeLimit",   GRB_IntParam_StartNodeLimit  }, {"IgnoreNames",        GRB_IntParam_IgnoreNames       },
+      {"PartitionPlace",   GRB_IntParam_PartitionPlace  }, {"CSPriority",         GRB_IntParam_CSPriority        },
+      {"CSTLSInsecure",    GRB_IntParam_CSTLSInsecure   }, {"CSIdleTimeout",      GRB_IntParam_CSIdleTimeout     },
+      {"ServerTimeout",    GRB_IntParam_ServerTimeout   }, {"TSPort",             GRB_IntParam_TSPort            },
+      {"JSONSolDetail",    GRB_IntParam_JSONSolDetail   }, {"CSBatchMode",        GRB_IntParam_CSBatchMode       },
+      {"FuncPieces",       GRB_IntParam_FuncPieces      }, {"CSClientLog",        GRB_IntParam_CSClientLog       },
+      {"IntegralityFocus", GRB_IntParam_IntegralityFocus}, {"NLPHeur",            GRB_IntParam_NLPHeur           },
+      {"WLSTokenDuration", GRB_IntParam_WLSTokenDuration}, {"LicenseID",          GRB_IntParam_LicenseID         },
+      {"OBBT",             GRB_IntParam_OBBT            }, {"FuncNonlinear",      GRB_IntParam_FuncNonlinear     },
+      {"SolutionTarget",   GRB_IntParam_SolutionTarget  }/*, {"ThreadLimit",        GRB_IntParam_ThreadLimit       }*/
+   };
+   const static unordered_map< string, GRB_DoubleParam > grb_double_params = {
+      {"Cutoff",           GRB_DoubleParam_Cutoff          }, {"IterationLimit", GRB_DoubleParam_IterationLimit   },
+      {"MemLimit",         GRB_DoubleParam_MemLimit        }, {"SoftMemLimit",      GRB_DoubleParam_SoftMemLimit     },
+      {"NodeLimit",        GRB_DoubleParam_NodeLimit       }, {"TimeLimit",         GRB_DoubleParam_TimeLimit        },
+      {"WorkLimit",        GRB_DoubleParam_WorkLimit       }, {"FeasibilityTol",    GRB_DoubleParam_FeasibilityTol   },
+      {"IntFeasTol",       GRB_DoubleParam_IntFeasTol      }, {"MarkowitzTol",      GRB_DoubleParam_MarkowitzTol     },
+      {"MIPGap",           GRB_DoubleParam_MIPGap          }, {"MIPGapAbs",         GRB_DoubleParam_MIPGapAbs        },
+      {"OptimalityTol",    GRB_DoubleParam_OptimalityTol   }, {"PerturbValue",      GRB_DoubleParam_PerturbValue     },
+      {"Heuristics",       GRB_DoubleParam_Heuristics      }, {"ObjScale",          GRB_DoubleParam_ObjScale         },
+      {"NodefileStart",    GRB_DoubleParam_NodefileStart   }, {"BarConvTol",        GRB_DoubleParam_BarConvTol       },
+      {"BarQCPConvTol",    GRB_DoubleParam_BarQCPConvTol   }, {"PSDTol",            GRB_DoubleParam_PSDTol           },
+      {"ImproveStartGap",  GRB_DoubleParam_ImproveStartGap }, {"ImproveStartNodes", GRB_DoubleParam_ImproveStartNodes},
+      {"ImproveStartTime", GRB_DoubleParam_ImproveStartTime}, {"FeasRelaxBigM",     GRB_DoubleParam_FeasRelaxBigM    },
+      {"TuneTimeLimit",    GRB_DoubleParam_TuneTimeLimit   }, {"TuneCleanup",       GRB_DoubleParam_TuneCleanup      },
+      {"TuneTargetMIPGap", GRB_DoubleParam_TuneTargetMIPGap}, {"TuneTargetTime",    GRB_DoubleParam_TuneTargetTime   },
+      {"PreSOS1BigM",      GRB_DoubleParam_PreSOS1BigM     }, {"PreSOS2BigM",       GRB_DoubleParam_PreSOS2BigM      },
+      {"PoolGap",          GRB_DoubleParam_PoolGap         }, {"PoolGapAbs",        GRB_DoubleParam_PoolGapAbs       },
+      {"BestObjStop",      GRB_DoubleParam_BestObjStop     }, {"BestBdStop",        GRB_DoubleParam_BestBdStop       },
+      {"CSQueueTimeout",   GRB_DoubleParam_CSQueueTimeout  }, {"FuncPieceError",    GRB_DoubleParam_FuncPieceError   },
+      {"FuncPieceLength",  GRB_DoubleParam_FuncPieceLength }, {"FuncPieceRatio",    GRB_DoubleParam_FuncPieceRatio   },
+      {"FuncMaxVal",       GRB_DoubleParam_FuncMaxVal      }, {"NoRelHeurTime",     GRB_DoubleParam_NoRelHeurTime    },
+      {"NoRelHeurWork",    GRB_DoubleParam_NoRelHeurWork   }, {"WLSTokenRefresh",   GRB_DoubleParam_WLSTokenRefresh  }
+   };
+   const static unordered_map< string, GRB_StringParam > grb_string_params = {
+      {"LogFile",        GRB_StringParam_LogFile       }, {"NodefileDir",    GRB_StringParam_NodefileDir   },
+      {"ResultFile",     GRB_StringParam_ResultFile    }, {"WorkerPool",     GRB_StringParam_WorkerPool    },
+      {"WorkerPassword", GRB_StringParam_WorkerPassword}, {"ComputeServer",  GRB_StringParam_ComputeServer },
+      {"ServerPassword", GRB_StringParam_ServerPassword}, {"CSRouter",       GRB_StringParam_CSRouter      },
+      {"CSGroup",        GRB_StringParam_CSGroup       }, {"TokenServer",    GRB_StringParam_TokenServer   },
+      {"CloudAccessID",  GRB_StringParam_CloudAccessID }, {"CloudSecretKey", GRB_StringParam_CloudSecretKey},
+      {"CloudPool",      GRB_StringParam_CloudPool     }, {"CloudHost",      GRB_StringParam_CloudHost     },
+      {"JobID",          GRB_StringParam_JobID         }, {"CSManager",      GRB_StringParam_CSManager     },
+      {"CSAuthToken",    GRB_StringParam_CSAuthToken   }, {"CSAPIAccessID",  GRB_StringParam_CSAPIAccessID },
+      {"CSAPISecret",    GRB_StringParam_CSAPISecret   }, {"UserName",       GRB_StringParam_UserName      },
+      {"CSAppName",      GRB_StringParam_CSAppName     }, {"SolFiles",       GRB_StringParam_SolFiles      },
+      {"WLSAccessID",    GRB_StringParam_WLSAccessID   }, {"WLSSecret",      GRB_StringParam_WLSSecret     },
+      {"WLSToken",       GRB_StringParam_WLSToken      }, /*{"WLSProxy",       GRB_StringParam_WLSProxy      },*/
+      /*{"WLSConfig",      GRB_StringParam_WLSConfig     },*/ {"Dummy",          GRB_StringParam_Dummy         }
+   };
+   const static array<string, 3> prefixes{"GRBD", "GRBI", "GRBS"};
+   for(const auto& [name, args] : processed_opts) {
+      const string& param_name(name.substr(4));
+      if(name.starts_with("GRBD") && grb_double_params.contains(param_name)) {
+         set_grb_double_param(env, args[0], grb_double_params.at(param_name));
+      }
+      else if(name.starts_with("GRBI") && grb_int_params.contains(param_name)) {
+         set_grb_int_param(env, args[0], grb_int_params.at(param_name));
+      }
+      else if(name.starts_with("GRBS") && grb_string_params.contains(param_name)) {
+         set_grb_string_param(env, args[0], grb_string_params.at(param_name));
+      }
+   }
 }
 
 template<typename Func>
@@ -1356,7 +1588,7 @@ auto get_targets_paths(const path& load_path, const string& key_name) {
    return paths;
 }
 
-auto get_targets(const vec<path>& files_path) {
+auto get_targets(const RangeOf<path> auto& files_path) {
    vec<mat<double>> targets;
    ranges::move(files_path | views::transform([](const path& path) { 
       return read_matrix_from_csv<double>(fstream(path));
@@ -1365,7 +1597,7 @@ auto get_targets(const vec<path>& files_path) {
 }
 
 template<typename T>
-auto full_layer_parameter(const vec<int>& C, const T& value) {
+auto full_layer_parameter(const RangeOf<int> auto& C, const T& value) {
    vec<mat<T>> data(C.size() - 1);
    for(const auto& [k, sizes] : C | views::adjacent<2> | views::enumerate) {
       const auto& [n, m] = sizes;
@@ -1377,24 +1609,6 @@ auto full_layer_parameter(const vec<int>& C, const T& value) {
    return data;
 }
 
-void set_grb_int_param(GRBEnv& env, const string& arg, GRB_IntParam code) {
-   int param;
-   stringstream(arg) >> param;
-   env.set(code, param);
-}
-
-void set_grb_double_param(GRBEnv& env, const string& arg, GRB_DoubleParam code) {
-   double param;
-   stringstream(arg) >> param;
-   env.set(code, param);
-}
-
-void set_grb_string_param(GRBEnv& env, const string& arg, GRB_StringParam code) {
-   string param;
-   stringstream(arg) >> param;
-   env.set(code, param);
-}
-
 int main(int argc, const char* argv[]) try {
    // Procesa opciones y si no es correcta termina
    auto e_opts = process_opts(argc,argv);
@@ -1402,31 +1616,45 @@ int main(int argc, const char* argv[]) try {
       cout << get<string>(e_opts);
       return 0;
    }
+   auto opts = get<unordered_map<string,vec<string>>>(e_opts);
    // Parametros por default
    GRBEnv ambiente;
-   ambiente.set(GRB_IntParam_JSONSolDetail, 1);
-   ambiente.set(GRB_IntParam_MIPFocus, 3);
    // Procesa las rutas de los archivos a leer
-   auto opts = get<unordered_map<string,vec<string>>>(e_opts);
-   path save_path = opts.contains("save_path") ? opts["save_path"][0] : "";
-   path load_path = opts.contains("load_path") ? opts["load_path"][0] : "";
+   path save_path   = opts.contains("save_path") ? opts["save_path"][0] : "";
+   path load_path   = opts.contains("load_path") ? opts["load_path"][0] : "";
    string save_name = opts.contains("save_name") ? opts["save_name"][0] : "model";
    string load_name = opts.contains("load_name") ? opts["load_name"][0] : "";
    // Lee las caracteristicas de la arquitectura y la base de datos
-   path arch_path = load_path / format("{}.csv", safe_suffix(load_name, "arch"));
+   path arch_path     = load_path / format("{}.csv", safe_suffix(load_name, "arch"));
    path features_path = load_path / format("{}.csv", safe_suffix(load_name, "ftr"));
    const auto& regression_targets = get_targets(get_targets_paths(load_path, "reg_tgt"));
-   const auto& class_targets = get_targets(get_targets_paths(load_path, "cls_tgt"));
-   const auto& [C, AF, dropout,  hardtanh, l1w_norm, l1a_norm, bias, w_pen, c_drop] = read_arch(fstream(arch_path));
+   const auto& class_targets      = get_targets(get_targets_paths(load_path, "cls_tgt"));
+   const auto& [C, AF, dropout, hardtanh, l1w_norm, l1a_norm, l2w_norm, l2a_norm, bias, c_drop] = read_arch(fstream(arch_path));
    const auto& features = read_matrix_from_csv<double>(fstream(features_path), true, true);
    int T = features.size(), L = C.size() - 1;
    // Lee los bits utilizados o crea uno por default
+   int min_bits = 1;
+   process_yes_arg(opts, "min_bits", [&min_bits](const auto& args) {
+      stringstream(args[0]) >> min_bits;
+   });
+   int max_bits = 16;
+   process_yes_arg(opts, "max_bits", [&max_bits](const auto& args) {
+      stringstream(args[0]) >> max_bits;
+   });
+   int min_exp = -20;
+   process_yes_arg(opts, "min_exp", [&min_exp](const auto& args) {
+      stringstream(args[0]) >> min_exp;
+   });
+   int max_exp = 20;
+   process_yes_arg(opts, "max_exp", [&max_exp](const auto& args) {
+      stringstream(args[0]) >> max_exp;
+   });
    vec<mat<int>> bits;
    if(opts.contains("use_bits")) {
       path file_path = load_path / format("{}.csv", safe_suffix(load_name, "bits"));
       const auto& [dim, data] = read_list_from_csv<int>(fstream(file_path));
-      if(dim[0].size() == 2) {
-         bits = get_layers_matrix<int>(dim, data);
+      if(dim.size() > 0 && dim[0].size() == 2) {
+         bits = clamp_layers_matrix(get_layers_matrix<int, int>(dim, data), min_bits, max_bits);
       }
    }
    if(bits.empty()) {
@@ -1437,32 +1665,45 @@ int main(int argc, const char* argv[]) try {
    if(opts.contains("use_exp")) {
       path file_path = load_path / format("{}.csv", safe_suffix(load_name, "exp"));
       const auto& [dim, data] = read_list_from_csv<int>(fstream(file_path));
-      if(dim[0].size() == 2) {
-         precision = get_layers_matrix<int>(dim, data);
+      if(dim.size() > 0 && dim[0].size() == 2) {
+         precision = clamp_layers_matrix(get_layers_matrix<int, int>(dim, data), min_exp, max_exp);
       }
    }
    if(precision.empty()) {
       precision = full_layer_parameter<int>(C, 2);
    }
    // Lee las mascaras utilizadas o crea una por default
-   vec<mat<int>> mask;
+   vec<mat<bool>> mask;
    if(opts.contains("use_mask")) {
       path file_path = load_path / format("{}.csv" ,safe_suffix(load_name, "mask"));
       const auto& [dim, data] = read_list_from_csv<int>(fstream(file_path));
-      if(dim[0].size() == 2) {
-         mask = get_layers_matrix<int>(dim, data);
+      if(dim.size() > 0 && dim[0].size() == 2) {
+         mask = get_layers_matrix<bool, int>(dim, data);
       }
    }
    if(mask.empty()) {
-      mask = full_layer_parameter<int>(C, 1);
+      mask = full_layer_parameter<bool>(C, true);
+   }
+   
+   // Lee las mascaras utilizadas o crea una por default
+   vec<mat<bool>> fixed;
+   if(opts.contains("use_fixed")) {
+      path file_path = load_path / format("{}.csv" ,safe_suffix(load_name, "fixed"));
+      const auto& [dim, data] = read_list_from_csv<int>(fstream(file_path));
+      if(dim.size() > 0 && dim[0].size() == 2) {
+         fixed = get_layers_matrix<bool, int>(dim, data);
+      }
+   }
+   if(fixed.empty()) {
+      fixed = full_layer_parameter<bool>(C, false);
    }
    // Lee los pesos iniciales o crea uno por default
    vec<mat<optional<double>>> init_w;
    if(opts.contains("use_init")) {
       path file_path = load_path / format("{}.csv", safe_suffix(load_name, "init"));
       const auto& [dim, data] = read_list_from_csv<double>(fstream(file_path));
-      if(dim[0].size() == 2) {
-         init_w = get_layers_matrix<optional<double>>(dim, data);
+      if(dim.size() > 0 && dim[0].size() == 2) {
+         init_w = get_layers_matrix<optional<double>, double>(dim, data);
       }
    }
    if(init_w.empty()) {
@@ -1475,7 +1716,7 @@ int main(int argc, const char* argv[]) try {
       const auto& [dim, data] = read_list_from_csv<double>(fstream(file_path));
       leakyReLU = data;
    }
-   else {
+   if(leakyReLU.empty()) {
       leakyReLU = vec<vec<double>>(L);
       for(auto&& [leakyReLU, C] : views::zip(leakyReLU, C | views::drop(1))) {
          ranges::fill_n(back_inserter(leakyReLU), C, 0.25);
@@ -1495,6 +1736,10 @@ int main(int argc, const char* argv[]) try {
    double error_priority = 1.0;
    process_yes_arg(opts, "error_prio", [&error_priority](const auto& args) {
       stringstream(args[0]) >> error_priority;
+   });
+   optional<double> weight_penalty;
+   process_yes_arg(opts, "weight_penalty", [&weight_penalty](const auto& args) {
+      stringstream(args[0]) >> weight_penalty;
    });
    double zero_tolerance = 0.0001;
    process_yes_arg(opts, "zero_tol", [&zero_tolerance](const auto& args) {
@@ -1516,140 +1761,36 @@ int main(int argc, const char* argv[]) try {
    process_yes_arg(opts, "lazy", [&lazy](const auto& args) {
       stringstream(args[0]) >> lazy;
    });
+   bool use_sos           =  opts.contains("use_sos"          );
+   bool use_gurobi        =  opts.contains("gurobi_constrs"   );
+   bool relaxed_model     =  opts.contains("relaxed_model"    );
+   bool alternative_model =  opts.contains("alternative_model");
+   bool use_start         =  opts.contains("use_start"        );
+   bool optimize          = !opts.contains("no_optimize"      );
+   bool save_lp           = !opts.contains("no_save_lp"       );
+   bool save_ilp          = !opts.contains("no_save_ilp"      );
+   bool save_sol          = !opts.contains("no_save_sol"      );
+   bool save_mst          = !opts.contains("no_save_mst"      );
+   bool save_json         = !opts.contains("no_save_json"     );
+   bool no_dropouts       =  opts.contains("no_dropouts"      );
+   bool no_l1             =  opts.contains("no_l1"            );
+   bool no_l2             =  opts.contains("no_l2"            );
+   bool use_square        =  opts.contains("use_square"       );
+   int LogToConsole       = !opts.contains("no_log_to_console");
    process_no_arg(opts, "no_save_sols", [&SolFiles, &ambiente]() {
       ambiente.set(GRB_StringParam_SolFiles, SolFiles);
    });
    process_no_arg(opts, "no_save_log", [&LogFile, &ambiente]() {
       ambiente.set(GRB_StringParam_LogFile, LogFile);
    });
-   process_yes_arg(opts, "best_obj_stop", [&ambiente](const auto& args) {
-      set_grb_double_param(ambiente, args[0], GRB_DoubleParam_BestObjStop);
-   });
-   process_yes_arg(opts, "feas_tol", [&ambiente](const auto& args) {
-      set_grb_double_param(ambiente, args[0], GRB_DoubleParam_FeasibilityTol);
-   });
-   process_yes_arg(opts, "int_feas_tol", [&ambiente](const auto& args) {
-      set_grb_double_param(ambiente, args[0], GRB_DoubleParam_IntFeasTol);
-   });
-   process_yes_arg(opts, "iteration_limit", [&ambiente](const auto& args) {
-      set_grb_double_param(ambiente, args[0], GRB_DoubleParam_IterationLimit);
-   });
-   process_yes_arg(opts, "opt_tol", [&ambiente](const auto& args) {
-      set_grb_double_param(ambiente, args[0], GRB_DoubleParam_OptimalityTol);
-   });
-   process_yes_arg(opts, "time_limit", [&ambiente](const auto& args) {
-      set_grb_double_param(ambiente, args[0], GRB_DoubleParam_TimeLimit);
-   });
-   process_yes_arg(opts, "node_limit", [&ambiente](const auto& args) {
-      set_grb_double_param(ambiente, args[0], GRB_DoubleParam_NodeLimit);
-   });
-   process_yes_arg(opts, "solution_limit", [&ambiente](const auto& args) {
-      set_grb_int_param(ambiente, args[0], GRB_IntParam_SolutionLimit);
-   });
-   process_yes_arg(opts, "cuts", [&ambiente](const auto& args) {
-      set_grb_int_param(ambiente, args[0], GRB_IntParam_Cuts);
-   });
-   process_yes_arg(opts, "con_method", [&ambiente](const auto& args) {
-      set_grb_int_param(ambiente, args[0], GRB_IntParam_ConcurrentMethod);
-   });
-   process_yes_arg(opts, "con_jobs", [&ambiente](const auto& args) {
-      set_grb_int_param(ambiente, args[0], GRB_IntParam_ConcurrentJobs);
-   });
-   process_yes_arg(opts, "heuristics", [&ambiente](const auto& args) {
-      set_grb_double_param(ambiente, args[0], GRB_DoubleParam_Heuristics);
-   });
-   process_yes_arg(opts, "imp_start_gap", [&ambiente](const auto& args) {
-      set_grb_double_param(ambiente, args[0], GRB_DoubleParam_ImproveStartGap);
-   });
-   process_yes_arg(opts, "imp_start_nodes", [&ambiente](const auto& args) {
-      set_grb_double_param(ambiente, args[0], GRB_DoubleParam_ImproveStartNodes);
-   });
-   process_yes_arg(opts, "imp_start_time", [&ambiente](const auto& args) {
-      set_grb_double_param(ambiente, args[0], GRB_DoubleParam_ImproveStartTime);
-   });
-   process_yes_arg(opts, "method", [&ambiente](const auto& args) {
-      set_grb_int_param(ambiente, args[0], GRB_IntParam_Method);
-   });
-   process_yes_arg(opts, "min_rel_nodes", [&ambiente](const auto& args) {
-      set_grb_int_param(ambiente, args[0], GRB_IntParam_MinRelNodes);
-   });
-   process_yes_arg(opts, "mip_focus", [&ambiente](const auto& args) {
-      set_grb_int_param(ambiente, args[0], GRB_IntParam_MIPFocus);
-   });
-   process_yes_arg(opts, "node_method", [&ambiente](const auto& args) {
-      set_grb_int_param(ambiente, args[0], GRB_IntParam_NodeMethod);
-   });
-   process_yes_arg(opts, "pre_dep_row", [&ambiente](const auto& args) {
-      set_grb_int_param(ambiente, args[0], GRB_IntParam_PreDepRow);
-   });
-   process_yes_arg(opts, "pre_dual", [&ambiente](const auto& args) {
-      set_grb_int_param(ambiente, args[0], GRB_IntParam_PreDual);
-   });
-   process_yes_arg(opts, "pre_passes", [&ambiente](const auto& args) {
-      set_grb_int_param(ambiente, args[0], GRB_IntParam_PrePasses);
-   });
-   process_yes_arg(opts, "presolve", [&ambiente](const auto& args) {
-      set_grb_int_param(ambiente, args[0], GRB_IntParam_Presolve);
-   });
-   process_yes_arg(opts, "pump_passes", [&ambiente](const auto& args) {
-      set_grb_int_param(ambiente, args[0], GRB_IntParam_PumpPasses);
-   });
-   process_yes_arg(opts, "rins", [&ambiente](const auto& args) {
-      set_grb_int_param(ambiente, args[0], GRB_IntParam_RINS);
-   });
-   process_yes_arg(opts, "sifting", [&ambiente](const auto& args) {
-      set_grb_int_param(ambiente, args[0], GRB_IntParam_Sifting);
-   });
-   process_yes_arg(opts, "sift_method", [&ambiente](const auto& args) {
-      set_grb_int_param(ambiente, args[0], GRB_IntParam_SiftMethod);
-   });
-   process_yes_arg(opts, "soft_mem_limit", [&ambiente](const auto& args) {
-      set_grb_double_param(ambiente, args[0], GRB_DoubleParam_SoftMemLimit);
-   });
-   process_yes_arg(opts, "start_node_limit", [&ambiente](const auto& args) {
-      set_grb_int_param(ambiente, args[0], GRB_IntParam_StartNodeLimit);
-   });
-   process_yes_arg(opts, "submip_nodes", [&ambiente](const auto& args) {
-      set_grb_int_param(ambiente, args[0], GRB_IntParam_SubMIPNodes);
-   });
-   process_yes_arg(opts, "symmetry", [&ambiente](const auto& args) {
-      set_grb_int_param(ambiente, args[0], GRB_IntParam_Symmetry);
-   });
-   process_yes_arg(opts, "branch_dir", [&ambiente](const auto& args) {
-      set_grb_int_param(ambiente, args[0], GRB_IntParam_BranchDir);
-   });
-   process_yes_arg(opts, "aggregate", [&ambiente](const auto& args) {
-      set_grb_int_param(ambiente, args[0], GRB_IntParam_Aggregate);
-   });
-   process_yes_arg(opts, "agg_fill", [&ambiente](const auto& args) {
-      set_grb_int_param(ambiente, args[0], GRB_IntParam_AggFill);
-   });
-   process_yes_arg(opts, "disconnected", [&ambiente](const auto& args) {
-      set_grb_int_param(ambiente, args[0], GRB_IntParam_Disconnected);
-   });
-   process_yes_arg(opts, "var_branch", [&ambiente](const auto& args) {
-      set_grb_int_param(ambiente, args[0], GRB_IntParam_VarBranch);
-   });
-   process_yes_arg(opts, "threads", [&ambiente](const auto& args) {
-      set_grb_int_param(ambiente, args[0], GRB_IntParam_Threads);
-   });
-   ambiente.set(GRB_IntParam_Seed, seed);
-   int LogToConsole = !opts.contains("no_log_to_console");
-   ambiente.set(GRB_IntParam_LogToConsole, LogToConsole);
-   bool use_sos    = opts.contains("use_sos");
-   bool use_gurobi = opts.contains("gurobi_constrs");
-   bool relaxed_model = opts.contains("relaxed_model");
-   bool alternative_model = opts.contains("alternative_model");
-   bool use_start = opts.contains("use_start");
-   bool optimize  = !opts.contains("no_optimize" );
-   bool save_lp   = !opts.contains("no_save_lp"  );
-   bool save_ilp  = !opts.contains("no_save_ilp" );
-   bool save_sol  = !opts.contains("no_save_sol" );
-   bool save_mst  = !opts.contains("no_save_mst" );
-   bool save_json = !opts.contains("no_save_json");
+   ambiente.set(GRB_IntParam_JSONSolDetail, 1           );
+   ambiente.set(GRB_IntParam_MIPFocus,      3           );
+   ambiente.set(GRB_IntParam_Seed,          seed        );
+   ambiente.set(GRB_IntParam_LogToConsole,  LogToConsole);
    // Genera los vectores de desactivar entradas o conexiones en la red neuronal, utilizando una semilla
    // o utilizado de manera aleatoria en caso de no proporcionarla
-   const auto& [db, cdb] = generate_dropouts(C, dropout, c_drop, mt19937(seed));
+   const auto& [db, cdb] = generate_dropouts(C, dropout, c_drop, mt19937(seed), no_dropouts);
+   process_env(ambiente, opts);
    GRBModel modelo = get_model(
       /* GRBEnv ambiente gurobi */ambiente,
       /* Numero de casos T */ T,
@@ -1666,7 +1807,10 @@ int main(int argc, const char* argv[]) try {
       /* Probabilidades de volver cero alguna entrada */ db,
       /* Regularización L1 sobre activacion */ l1a_norm,
       /* Regularización L1 sobre pesos */ l1w_norm,
-      /* Penalización por alejarse de la solución inicial */ w_pen,
+      /* Regularización L2 sobre activacion */ l2a_norm,
+      /* Regularización L2 sobre pesos */ l2w_norm,
+      /* Penalización por alejarse de la solución inicial */ weight_penalty,
+      /* Mantener fijo los pesos */ fixed,
       /* Probabilidades de desactivar conexiones */ cdb,
       /* Matriz de las caracteristicas */ features,
       /* Matriz de la clasificacion deseada */ class_targets,
@@ -1681,13 +1825,16 @@ int main(int argc, const char* argv[]) try {
       /* Usar restricciones proporcionadas por gurobi */ use_gurobi,
       /* Usar restricciones tipo SOS1 */ use_sos,
       /* Usar tolerancia para los ceros en las matrices */ zero_off_tolerance,
-      /* Usar modelo alternativo donde es un offset de los pesos iniciales */ alternative_model
+      /* Usar modelo alternativo donde es un offset de los pesos iniciales */ alternative_model,
+      /* Usar aproximacion de error cuadratico */ use_square,
+      /* No usar L1 */ no_l1,
+      /* No usar L2 */ no_l2
    );
    if(save_lp)
       modelo.write(path(format("{}.lp.7z", file_path)).string());
    if(optimize) {
       modelo.update();
-      modelo.optimize( );
+      modelo.optimize();
       switch(modelo.get(GRB_IntAttr_Status)) {
          case GRB_OPTIMAL :
             cout << "Solución encontrada\n";

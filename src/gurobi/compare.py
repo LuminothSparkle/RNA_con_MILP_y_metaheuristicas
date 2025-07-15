@@ -9,7 +9,7 @@ from pandas import DataFrame
 from src.utility.io.dataset import load_pytorch_dataset
 from src.utility.io.model import load_model
 from src.utility.nn.stats import (
-    accuracy_comparation, binomial_test, stats_dataframe
+    accuracy_comparation, binomial_test, stats_dataframe, weight_comparation
 )
 from trainers.datasets import CrossvalidationDataset
 from utility.nn.lineal import LinealNN
@@ -19,6 +19,7 @@ def save_log(
     metrics_a: DataFrame,
     metrics_b: DataFrame,
     probability: float,
+    weight_comp: list,
     log_path: Path,
     exists_ok: bool = True
 ):
@@ -30,8 +31,13 @@ def save_log(
     )
     with log_path.open('wt', encoding='utf-8') as fp:
         fp.write(
-            f'Probability of having more performance {probability:.3%}'
+            f'Probability of having more performance : {probability:.3%}\n'
         )
+        for k, (mean, std) in enumerate(weight_comp):
+            fp.write(
+                f'Layer {k:3} mean distance and std between weights :'
+                f'{mean:10}, {std:10}\n'
+            )
         for (label, *data_a), (data_b) in zip(
             [*metrics_a.itertuples(index=True, name=None)],
             [*metrics_b.itertuples(index=False, name=None)]
@@ -67,8 +73,10 @@ def main(args: argparse.Namespace):
     p = binomial_test(a_over_b, b_over_a, 0.5)
     stats_a = stats_dataframe(model_a, dataset)
     stats_b = stats_dataframe(model_a, dataset)
+    w_comp = weight_comparation(model_a, model_b)
     save_log(
         stats_a, stats_b, p,
+        w_comp,
         args.save_path / f'{args.name_a}_vs_{args.name_b}.log',
         not args.no_overwrite
     )

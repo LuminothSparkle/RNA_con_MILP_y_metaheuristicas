@@ -101,7 +101,7 @@
                 "--load_path",
                 "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/dataframes",
                 "--batch_size",
-                "30",
+                "10",
                 "--load_name",
                 "bcw",
                 "--case_index",
@@ -157,8 +157,6 @@
                 "bcw",
                 "--case_index",
                 "best",
-                "--max_bits",
-                "3",
             ],
             "type": "shell",
             "group": {

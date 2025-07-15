@@ -117,6 +117,7 @@ def read_files(
         )
         module = future_model.result()
         weights = future_sol.result()
+        print([w.shape for w in weights])
     if isinstance(module, LinealNN):
         module.set_weights(weights)
     return module
@@ -125,9 +126,7 @@ def read_files(
 def write_files(
     module: LinealNN,
     dir_path: Path, save_name: str = '',
-    zero_tolerance: float = 0.00001, min_bits: int = 2,
-    max_bits: int = 10,
-    w_penalty: float | None = None,
+    zero_tolerance: float = 0.00001,
     exists_ok=True
 ):
     """
@@ -156,16 +155,6 @@ def write_files(
             mbit[m > zero_tolerance] += 1
             m, _ = numpy.modf(2 * m)
         bits += [mbit]
-    bits = [
-        numpy.maximum(
-            numpy.minimum(
-                mbit,
-                numpy.full_like(mbit, max_bits)
-            ),
-            numpy.full_like(mbit, min_bits)
-        )
-        for mbit in bits
-    ]
     connections = [
         (mask.T * (numpy.abs(weight).T > zero_tolerance)).astype(int)
         for weight, mask in zip(weights, masks)
@@ -241,10 +230,9 @@ def write_files(
     ]
     arch['l1w'] = [*module.l1_weight, None]
     arch['l1a'] = [*module.l1_activation, None]
+    arch['l2w'] = [*module.l2_weight, None]
+    arch['l2a'] = [*module.l2_activation, None]
     arch['bias'] = [*module.bias, None]
-    arch['wp'] = [
-        w_penalty for _ in range(layers + 1)
-    ]
     arch['cdp'] = [*module.connection_dropout, None]
     assert exists_ok or not files_path_dict['arch'].exists(), (
         f"El archivo {files_path_dict['arch']} ya existe"
@@ -272,9 +260,6 @@ def main(args: argparse.Namespace):
                 dir_path=save_path,
                 save_name=args.save_name,
                 zero_tolerance=args.zero_tolerance,
-                min_bits=args.min_bits,
-                max_bits=args.max_bits,
-                w_penalty=args.w_penalty,
                 exists_ok=not args.no_overwrite
             )
     else:
@@ -311,8 +296,6 @@ if __name__ == '__main__':
         '--zero_tolerance', '-zt',
         type=float, default=0.000001
     )
-    argparser.add_argument('--min_bits', '-mib', type=int, default=2)
-    argparser.add_argument('--max_bits', '-mab', type=int, default=10)
     argparser.add_argument(
         '--no_overwrite', '-eo',
         action='store_true'
@@ -320,5 +303,4 @@ if __name__ == '__main__':
     argparser.add_argument('--load_name', '-ln', type=str, default='')
     argparser.add_argument('--save_name', '-sn', type=str, default='')
     argparser.add_argument('--case_index', '-ci', type=str, default='')
-    argparser.add_argument('--w_penalty', '-wp', type=float, default=None)
     sys.exit(main(argparser.parse_args(sys.argv[1:])))

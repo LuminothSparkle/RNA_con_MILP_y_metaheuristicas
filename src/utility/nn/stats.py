@@ -33,6 +33,19 @@ regression_metrics_labels = [
 ]
 
 
+def weight_comparation(
+    model_a: LinealNN, model_b: LinealNN
+):
+    """
+    A
+    """
+    stats = []
+    for wa, wb in zip(model_a.get_weights(), model_b.get_weights()):
+        diff = wa - wb
+        stats += [(numpy.mean(diff), numpy.std(diff))]
+    return stats
+
+
 def accuracy_comparation(
     model_a: LinealNN, model_b: LinealNN,
     dataset: CrossvalidationDataset,
