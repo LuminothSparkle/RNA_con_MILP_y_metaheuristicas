@@ -10,7 +10,9 @@ import numpy
 from numpy import ndarray
 import pandas
 from pandas import DataFrame, Index, read_csv
-from torch.nn import Hardtanh, PReLU, LeakyReLU
+from torch.nn import (
+    Hardtanh, PReLU, LeakyReLU, Hardshrink, Softshrink, Threshold
+)
 from crossvalidation.files import safe_suffix
 from src.utility.nn.lineal import LinealNN
 from src.utility.io.model import load_model, save_model
@@ -117,7 +119,6 @@ def read_files(
         )
         module = future_model.result()
         weights = future_sol.result()
-        print([w.shape for w in weights])
     if isinstance(module, LinealNN):
         module.set_weights(weights)
     return module
@@ -135,16 +136,16 @@ def write_files(
     dir_path.mkdir(parents=True, exist_ok=True)
     files_suffix = [
         'bias', 'exp', 'bits', 'mask', 'arch',
-        'lrelu', 'cls_tgt', 'reg_tgt', 'ftr', 'init'
+        'params', 'cls_tgt', 'reg_tgt', 'ftr', 'init'
     ]
     files_path_dict = {
         file_type: dir_path / f'{safe_suffix(save_name, file_type)}.csv'
         for file_type in files_suffix
     }
     layers, act_layers = module.layers, module.activation_layers
-    masks = [mask.cpu().detach().numpy() for mask in module.masks]
-    weights = module.get_weights()
-    mantissa, exponent = zip(*(numpy.frexp(weight.T) for weight in weights))
+    masks = [mask.cpu().detach().numpy().T for mask in module.masks]
+    weights = [w.T for w in module.get_weights()]
+    mantissa, exponent = zip(*(numpy.frexp(w) for w in weights))
     mantissa = list(mantissa)
     exponent = list(exponent)
     bits = []
@@ -156,18 +157,38 @@ def write_files(
             m, _ = numpy.modf(2 * m)
         bits += [mbit]
     connections = [
-        (mask.T * (numpy.abs(weight).T > zero_tolerance)).astype(int)
-        for weight, mask in zip(weights, masks)
+        (mask * (numpy.abs(w) > zero_tolerance)).astype(int)
+        for w, mask in zip(weights, masks)
     ]
-    leaky_relu = [
-        act_layers[k].weight.cpu().detach().numpy()  # type: ignore
-        if isinstance(act_layers[k], PReLU)
-        else numpy.full(
-            (module.capacity[int(k) + 1],),
-            act_layers[k].negative_slope
+    params = [
+        numpy.array(
+            act_layers[k].weight.cpu().detach().numpy()  # type: ignore
+            if isinstance(act_layers[k], PReLU)
+            else [
+                act_layers[k].negative_slope
+                for _ in range(module.capacity[int(k) + 1])
+            ]
+            if isinstance(act_layers[k], LeakyReLU)
+            else [
+                act_layers[k].min_val, act_layers[k].max_val,
+                *[None for _ in range(2, module.capacity[int(k) + 1])]
+            ]
+            if isinstance(act_layers[k], Hardtanh)
+            else [
+                act_layers[k].lambd,
+                *[None for _ in range(1, module.capacity[int(k) + 1])]
+            ]
+            if (
+                isinstance(act_layers[k], Hardshrink) or
+                isinstance(act_layers[k], Softshrink)
+            )
+            else [
+                act_layers[k].threshold, act_layers[k].value,
+                *[None for _ in range(2, module.capacity[int(k) + 1])]
+            ]
+            if isinstance(act_layers[k], Threshold)
+            else [None for _ in range(module.capacity[int(k) + 1])]
         )
-        if isinstance(act_layers[k], LeakyReLU)
-        else numpy.full((module.capacity[int(k) + 1],), 0.25)
         for k in range(layers)
     ]
     assert exists_ok or not files_path_dict['init'].exists(), (
@@ -179,8 +200,8 @@ def write_files(
     assert exists_ok or not files_path_dict['lrelu'].exists(), (
         f"El archivo {files_path_dict['lrelu']} ya existe"
     )
-    tensor_list_to_dataframe(leaky_relu).to_csv(  # type: ignore
-        files_path_dict['lrelu'], header=True, index=False
+    tensor_list_to_dataframe(params).to_csv(  # type: ignore
+        files_path_dict['params'], header=True, index=False
     )
     assert exists_ok or not files_path_dict['mask'].exists(), (
         f"El archivo {files_path_dict['mask']} ya existe"
@@ -209,31 +230,13 @@ def write_files(
         ),
         None
     ]
+    arch['bias'] = [*module.bias, None]
     arch['dp'] = [*module.dropout, None]
-    arch['ht_min'] = [
-        *(
-            act_layers[k].min_val
-            if isinstance(act_layers[k], Hardtanh)
-            else -1
-            for k in range(layers)
-        ),
-        None
-    ]
-    arch['ht_max'] = [
-        *(
-            act_layers[k].max_val
-            if isinstance(act_layers[k], Hardtanh)
-            else 1
-            for k in range(layers)
-        ),
-        None
-    ]
+    arch['cdp'] = [*module.connection_dropout, None]
     arch['l1w'] = [*module.l1_weight, None]
     arch['l1a'] = [*module.l1_activation, None]
     arch['l2w'] = [*module.l2_weight, None]
     arch['l2a'] = [*module.l2_activation, None]
-    arch['bias'] = [*module.bias, None]
-    arch['cdp'] = [*module.connection_dropout, None]
     assert exists_ok or not files_path_dict['arch'].exists(), (
         f"El archivo {files_path_dict['arch']} ya existe"
     )
