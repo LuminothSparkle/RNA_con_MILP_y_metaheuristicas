@@ -11,8 +11,8 @@ from concurrent.futures import ThreadPoolExecutor
 import torch
 from src.trainers.datasets import KardexDataset, test_arch
 from src.utility.io.nnjson import read_arch_json, read_cv_json, gen_from_tuple
-from crossvalidation.files import generate_cv_files
-from utility.io.crossval import save_crossvalidation
+from src.crossvalidation.files import generate_cv_files
+from src.utility.io.crossval import save_crossvalidation
 
 
 def process_career(

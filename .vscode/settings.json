@@ -48,7 +48,9 @@
     "xlocnum": "cpp",
     "xmemory": "cpp",
     "iosfwd": "cpp",
-    "optional": "cpp"
+    "optional": "cpp",
+    "queue": "cpp",
+    "stack": "cpp"
   },
   "C_Cpp_Runner.cCompilerPath": "gcc",
   "C_Cpp_Runner.cppCompilerPath": "g++",
@@ -144,5 +146,6 @@
   "C_Cpp.vcFormat.space.beforeComma": true,
   "C_Cpp.vcFormat.space.beforeInitializerListOpenBrace": true,
   "C_Cpp.vcFormat.space.beforeLambdaOpenParenthesis": true,
-  "C_Cpp.vcFormat.space.beforeEmptySquareBrackets": true
+  "C_Cpp.vcFormat.space.beforeEmptySquareBrackets": true,
+  "python.useEnvironmentsExtension": false
 }

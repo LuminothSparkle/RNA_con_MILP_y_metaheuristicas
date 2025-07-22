@@ -168,5 +168,21 @@
                 "focus": true
             }
         },
+        {
+            "label": "Meta testing py",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/testing/meta.py"
+            ],
+            "type": "shell",
+            "group": {
+                "kind": "build",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true
+            }
+        },
     ]
 }

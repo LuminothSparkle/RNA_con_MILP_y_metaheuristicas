@@ -7,8 +7,8 @@ from pathlib import Path
 import torch
 from src.trainers.datasets import BCWDataset, test_arch
 from src.utility.io.nnjson import gen_from_tuple, read_arch_json, read_cv_json
-from crossvalidation.files import generate_cv_files
-from utility.io.crossval import save_crossvalidation
+from src.crossvalidation.files import generate_cv_files
+from src.utility.io.crossval import save_crossvalidation
 
 
 def main(args: argparse.Namespace):

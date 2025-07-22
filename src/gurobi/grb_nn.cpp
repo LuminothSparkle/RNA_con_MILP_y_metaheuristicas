@@ -35,6 +35,7 @@ using std::stoi;
 using std::stod;
 // Algoritmos de conveniencia
 using std::accumulate;
+using std::clamp;
 // Funciones de utilidad
 using std::reference_wrapper;
 using std::move;
@@ -61,6 +62,7 @@ using std::fstream;
 using std::istream;
 using std::ostream;
 using std::getline;
+using std::ios_base;
 // Funciones de random utilizadas
 using std::uniform_int_distribution;
 using std::random_device;
@@ -68,6 +70,7 @@ using std::bernoulli_distribution;
 using std::mt19937;
 // Funciones de cmath utilizadas
 using std::pow;
+using std::atanh;
 using std::log10;
 using std::fma;
 using std::log;
@@ -132,9 +135,95 @@ void cursorup_console(int n) {
    cout << "\x1b[" << n << "F" << flush;
 }
 
+void write_weights(const Tensor3Range<double> auto& weights, ostream& os) {
+   int col = 0;
+   for(const auto& weights : weights) {
+      col = max<int>(col, ranges::distance(weights | views::join));
+   }
+   mat<string> data(int(ranges::distance(weights)) + 1, vec<string>(col + 3));
+   data[0][1] = "d_0";
+   data[0][2] = "d_1";
+   ranges::move(views::iota(0, col) | views::transform([] (const auto& i) {
+      return format("{}", i);
+   }), data[0].begin() + 3);
+   for(auto&& [i, data, weights] : views::zip(views::iota(0), data | views::drop(1), weights)) {
+      data[0] = format("{}", i);
+      data[1] = format("{}", ranges::distance(weights));
+      data[2] = format("{}", ranges::distance(weights[0]));
+      ranges::move(weights | views::join | views::transform([] (double w) {
+         return format("{}", w);
+      }), data.begin() + 3);
+   }
+   for(const auto& data : data) {
+      for(const auto& data : data | views::join_with(',')) {
+         os << data;
+      }
+      os << "\n";
+   }
+   os << flush;
+}
+
+double calculate_w(const RangeOf<double> auto& b, int exp) {
+   double result = ldexp(-*ranges::begin(b), exp);
+   for(const auto& [i, b] : b | views::enumerate | views::drop(1)) {
+      result = fma(b, exp2(exp - i), result);
+   }
+   return result;
+}
+
+class NNGRBCallback : public GRBCallback {
+   public:
+      NNGRBCallback(const path& file_path) : file_path(file_path) {}
+      void set_binary(const ten4<GRBVar>& binary, const ten3<int>& exp, const ten3<GRBVar>& iw, const ten3<optional<double>>& tw) {
+         this->binary = binary;
+         this->exp = exp;
+         this->iw = iw;
+         this->tw = tw;
+      }
+   private:
+      path file_path;
+      ten4<GRBVar> binary;
+      ten3<GRBVar> iw;
+      ten3<optional<double>> tw;
+      ten3<int> exp;
+   protected:
+      void callback() try {
+         if(where == GRB_CB_MIPSOL) {
+            int solcnt = getIntInfo(GRB_CB_MIPSOL_SOLCNT);
+            ten3<double> sol(binary.size());
+            for(auto&& [sol, binary, exp, iw, tw] : views::zip(sol, binary, exp, iw, tw)) {
+               sol = mat<double>(binary.size());
+               for(auto&& [sol, binary, exp, iw, tw] : views::zip(sol, binary, exp, iw, tw)) {
+                  sol = vec<double>(binary.size());
+                  for(auto&& [sol, binary, exp, iw, tw] : views::zip(sol, binary, exp, iw, tw)) {
+                     vec<double> bin;
+                     for(const auto& binary : binary) {
+                        bin.emplace_back(getSolution(binary) < 0.5);
+                     }
+                     sol = calculate_w(bin, exp) + tw.value_or(0) * (getSolution(iw) < 0.5);
+                  }
+               }
+            }
+            cout << "Saving solution " << solcnt << "...\n";
+            fstream fo(file_path / format("weights_{}.csv", solcnt), ios_base::out);
+            if(fo.is_open()){
+               write_weights(sol, fo);
+            }
+            else {
+               cout << "Saving failed\n";
+            }
+         }
+      }
+      catch (const GRBException& ex) {
+      }
+      catch (...) {
+
+      }
+};
+
 template<typename T>
-T inverse_sigmoid(T x, T tol0 = 0.000000000001) {
-   return log(max(x, tol0)) - log1p(max(-x, tol0 - 1));
+T logit(T x, T tol0 = 0.000000000001) {
+   return 2 * atanh(clamp(2 * x - 1, -1 + tol0, 1 - tol0));
 }
 
 string safe_suffix(const string & a, const string& b) {
@@ -172,27 +261,21 @@ ostream&& operator <<(ostream&& stream, const optional<T>& opt) {
    return move(stream << opt);
 }
 
-auto decompose_w(const optional<double>& w, int size) {
-   vec<optional<double>> bits_floor(size), bits_ceil(size);
+auto decompose_w(const optional<double>& w, int size, int desired_exp = 0) {
+   vec<double> bits_floor(size, 0.0), bits_ceil(size, 0.0);
    if(w) {
       int exp, sign = *w == 0 ? 0 : (1 - 2 * (*w < 0));
-      double imantissa = frexp(*w, &exp) * exp2(size - 1);
-      int inf = floor(imantissa * -sign) * sign;
-      int sup = ceil( imantissa * -sign) * sign;
-      for(auto&& [bf, bc] : views::zip(bits_floor, bits_ceil) | views::reverse) {
-         bf = inf & 1; bc = sup & 1;
-         inf >>= 1;    sup >>= 1;
+      double imantissa = frexp(*w, &exp) * exp2(size - 1 - desired_exp + exp);
+      if(desired_exp >= exp) {
+         int inf = floor(imantissa * -sign) * sign;
+         int sup = ceil( imantissa * -sign) * sign;
+         for(auto&& [bf, bc] : views::zip(bits_floor, bits_ceil) | views::reverse) {
+            bf = inf & 1; bc = sup & 1;
+            inf >>= 1;    sup >>= 1;
+         }
       }
    }
    return make_tuple(bits_floor, bits_ceil);
-}
-
-double calculate_w(const RangeOf<optional<double>> auto& b, int exp) {
-   double result = ldexp(-(*ranges::begin(b)).value_or(0), exp);
-   for(const auto& [i, b] : b | views::enumerate | views::drop(1)) {
-      result = fma(b.value_or(0), exp2(exp - i), result);
-   }
-   return result;
 }
 
 void set_grb_int_param(GRBEnv& env, const string& arg, GRB_IntParam code) {
@@ -237,11 +320,11 @@ void gen_range_constr(
    }
 }
 
-auto gen_abs_obj_vars(GRBModel& model, const string& name, int phint = -10, bool hint = true) {
+auto gen_abs_obj_vars(GRBModel& model, const string& name, const optional<int>& hint = {}) {
    GRBVar plus  = model.addVar(0, GRB_INFINITY, 0, GRB_CONTINUOUS, format("{}_plus", name));
    GRBVar minus = model.addVar(0, GRB_INFINITY, 0, GRB_CONTINUOUS, format("{}_minus", name));
    if(hint) {
-      set_hint(plus,  0, phint); set_hint(minus, 0, phint);
+      set_hint(plus,  0, *hint); set_hint(minus, 0, *hint);
    }
    return make_tuple(plus, minus);
 }
@@ -249,9 +332,9 @@ auto gen_abs_obj_vars(GRBModel& model, const string& name, int phint = -10, bool
 auto gen_abs_range_obj_vars(
    GRBModel& model,      const GRBLinExpr& expr, const string& name,
    double lb = 0,        double ub = 0,          int lazy = 1,
-   bool use_grb = false, int phint = -10,        bool hint = true
+   bool use_grb = false, const optional<int>& hint = {}
 ) {
-   const auto& [plus, minus] = gen_abs_obj_vars(model, name, phint, hint);
+   const auto& [plus, minus] = gen_abs_obj_vars(model, name, hint);
    gen_range_constr(model, minus - plus + expr, lb, ub, name, lazy, use_grb);
    return make_tuple(plus, minus);
 }
@@ -259,21 +342,21 @@ auto gen_abs_range_obj_vars(
 GRBLinExpr gen_abs_range_obj_expr(
    GRBModel& model,      const GRBLinExpr& expr, const string& name,
    double lb = 0,        double ub = 0,          int lazy = 1,
-   bool use_grb = false, int phint = -10,        bool hint = true
+   bool use_grb = false, const optional<int>& hint = {}
 ) {
    const auto& [plus, minus] = gen_abs_range_obj_vars(
-      model, expr, name, lb, ub, lazy, use_grb, phint, hint
+      model, expr, name, lb, ub, lazy, use_grb, hint
    );
    return plus + minus;
 }
 
 auto gen_approx_square_obj_exprs(
-   GRBModel& model, const GRBLinExpr& expr, const string& name,
-   int lazy = 1,    bool use_grb = false,   int phint = -10,    bool hint = true
+   GRBModel& model,      const GRBLinExpr& expr, const string& name, int lazy = 1,
+   bool use_grb = false, const optional<int>& hint = {}
 ) {
-   auto&& [p1, m1] = gen_abs_obj_vars(model, format("{}_1", name), phint, hint);
-   auto&& [p2, m2] = gen_abs_obj_vars(model, format("{}_2", name), phint, hint);
-   auto&& [p3, m3] = gen_abs_obj_vars(model, format("{}_3", name), phint, hint);
+   auto&& [p1, m1] = gen_abs_obj_vars(model, format("{}_1", name), hint);
+   auto&& [p2, m2] = gen_abs_obj_vars(model, format("{}_2", name), hint);
+   auto&& [p3, m3] = gen_abs_obj_vars(model, format("{}_3", name), hint);
    p1.set(GRB_DoubleAttr_UB, 2.0); m1.set(GRB_DoubleAttr_UB, 2.0);
    p2.set(GRB_DoubleAttr_UB, 4.5); m2.set(GRB_DoubleAttr_UB, 4.5);
    gen_range_constr(model, m1 - p1 + m2 - p2 + m3 - p3 + expr, -0.5, 0.5, name, lazy, use_grb);
@@ -281,10 +364,10 @@ auto gen_approx_square_obj_exprs(
 }
 
 GRBLinExpr gen_approx_square_obj_expr(
-   GRBModel& model, const GRBLinExpr& expr, const string& name,
-   int lazy = 1,    bool use_grb = false,   int phint = -10,    bool hint = true
+   GRBModel& model,      const GRBLinExpr& expr, const string& name, int lazy = 1,
+   bool use_grb = false, const optional<int>& hint = {}
 ) {
-   const auto& [plus, minus] = gen_approx_square_obj_exprs(model, expr, name, lazy, use_grb, phint, hint);
+   const auto& [plus, minus] = gen_approx_square_obj_exprs(model, expr, name, lazy, use_grb, hint);
    return plus + minus;
 }
 
@@ -310,8 +393,9 @@ GRBVar gen_var(
 }
 
 GRBVar gen_abs_var(
-   GRBModel& model,      const GRBLinExpr& x, const string& name,
-   bool use_grb = false, bool obj = false,    int lazy = 0,   int phint = -10,    bool hint = true, bool use_bound = false, double bound = 0.0
+   GRBModel& model, const GRBLinExpr& x,  const string& name, bool obj = false,
+   int lazy = 0,    bool use_grb = false, const optional<int>& bound = {},
+   const optional<int>& hint = {}
 ) {
    GRBVar var_abs = model.addVar(0, GRB_INFINITY, 0, GRB_CONTINUOUS, name);
    if(use_grb) {
@@ -326,15 +410,15 @@ GRBVar gen_abs_var(
          model.addConstr(var_abs >=  x, format("{}_plus",  name)).set(GRB_IntAttr_Lazy, lazy);
          model.addConstr(var_abs >= -x, format("{}_minus", name)).set(GRB_IntAttr_Lazy, lazy);
          if(hint) {
-            set_hint(var_abs, phint, 0);
+            set_hint(var_abs, *hint, 0);
          }
       }
-      else if(use_bound) {
+      else if(bound) {
          const auto& a_or_b = model.addVar(0, 1, 0, GRB_BINARY, format("{}_or", name));
-         model.addConstr(                      x <= var_abs, format("{}_mlb", name)).set(GRB_IntAttr_Lazy, lazy);
-         model.addConstr(                         -x <= var_abs, format("{}_plb", name)).set(GRB_IntAttr_Lazy, lazy);
-         model.addConstr(bound *      a_or_b  + x >= var_abs, format("{}_mub", name)).set(GRB_IntAttr_Lazy, lazy);
-         model.addConstr(bound * (1 - a_or_b) - x >= var_abs, format("{}_pub", name)).set(GRB_IntAttr_Lazy, lazy);
+         model.addConstr(                       x <= var_abs, format("{}_mlb", name)).set(GRB_IntAttr_Lazy, lazy);
+         model.addConstr(                      -x <= var_abs, format("{}_plb", name)).set(GRB_IntAttr_Lazy, lazy);
+         model.addConstr(*bound *      a_or_b  + x >= var_abs, format("{}_mub", name)).set(GRB_IntAttr_Lazy, lazy);
+         model.addConstr(*bound * (1 - a_or_b) - x >= var_abs, format("{}_pub", name)).set(GRB_IntAttr_Lazy, lazy);
       }
       else {
          const auto& a_or_b = model.addVar(0, 1, 0, GRB_BINARY, format("{}_or", name));
@@ -346,30 +430,31 @@ GRBVar gen_abs_var(
 }
 
 GRBLinExpr gen_abs_expr(
-   GRBModel& model, const GRBLinExpr& x, const string& name,
-   bool use_grb = false, bool obj = false, int lazy = 0, int phint = -10, bool hint = false, bool use_bound = false, double bound = 0.0
+   GRBModel& model, const GRBLinExpr& x,  const string& name, bool obj = false,
+   int lazy = 0,    bool use_grb = false, const optional<int>& bound = {},
+   const optional<int>& hint = {}
 ) {
    if(obj && !use_grb) {
-      const auto& [plus, minus] = gen_abs_obj_vars(model, name, phint, hint);
+      const auto& [plus, minus] = gen_abs_obj_vars(model, name, hint);
       model.addConstr(plus - minus == x, name).set(GRB_IntAttr_Lazy, lazy);
       return plus + minus;
    }
-   return gen_abs_var(model, x, name, use_grb, obj, lazy, phint, hint, use_bound, bound);
+   return gen_abs_var(model, x, name, obj, lazy, use_grb, bound, hint);
 }
 
 GRBLinExpr gen_bin_w_expr(
-   GRBModel& model, const GRBVar& b, const GRBLinExpr& a, const string& name,
-   double coef,     int lazy = 0,    bool use_sos = false, bool use_bound = false, double bound = 0.0
+   GRBModel& model, const GRBVar& b, const GRBLinExpr& a,  const string& name,
+   double coef,     int lazy = 0,    bool use_sos = false, const optional<double>& bound = {}
 ) {
    if(coef == 0.0) {
       return GRBLinExpr();
    }
    GRBVar bw = model.addVar(-GRB_INFINITY, GRB_INFINITY, 0, GRB_CONTINUOUS, name);
-   if(use_bound) {
-      model.addConstr(bw <= coef * a + bound *      b,  format("{}_aub", name)).set(GRB_IntAttr_Lazy, lazy);
-      model.addConstr(bw >= coef * a - bound *      b,  format("{}_alb", name)).set(GRB_IntAttr_Lazy, lazy);
-      model.addConstr(bw <=            bound * (1 - b), format("{}_blb", name)).set(GRB_IntAttr_Lazy, lazy);
-      model.addConstr(bw >=           -bound * (1 - b), format("{}_bub", name)).set(GRB_IntAttr_Lazy, lazy);
+   if(bound) {
+      model.addConstr(bw <= coef * (a + *bound *      b), format("{}_aub", name)).set(GRB_IntAttr_Lazy, lazy);
+      model.addConstr(bw >= coef * (a - *bound *      b), format("{}_alb", name)).set(GRB_IntAttr_Lazy, lazy);
+      model.addConstr(bw <=             *bound * (1 - b), format("{}_blb", name)).set(GRB_IntAttr_Lazy, lazy);
+      model.addConstr(bw >=            -*bound * (1 - b), format("{}_bub", name)).set(GRB_IntAttr_Lazy, lazy);
    }
    else {
       model.addGenConstrIndicator(b, 0, bw == coef * a, format("{}_off", name));
@@ -385,12 +470,12 @@ GRBLinExpr gen_bin_w_expr(
 }
 
 auto gen_ReLU_vars(
-   GRBModel& model, const GRBLinExpr& z,  const string& name,
-   int lazy = 0,    bool use_sos = false, bool use_grb = false, bool use_bound = false, double bound = 0.0
+   GRBModel& model,      const GRBLinExpr& z,  const string& name,     int lazy = 0,
+   bool use_grb = false, bool use_sos = false, const optional<double>& bound = {}
 ) {
    const auto& var = model.addVar(0, GRB_INFINITY, 0, GRB_CONTINUOUS, name);
    const auto& on_0 = model.addVar(0, 1, 0, GRB_BINARY, format("{}_lb", name));
-   if(!use_bound) {
+   if(!bound) {
       model.addGenConstrIndicator(on_0, 0, var == z, format("{}_off",  name));
       if(use_sos) {
          array<GRBVar, 2> vars_z{on_0, var}; array<double, 2> weights_z{0, 1};
@@ -402,18 +487,18 @@ auto gen_ReLU_vars(
    }
    else {
       model.addConstr(var >= z,                  format("{}_ubz",name)).set(GRB_IntAttr_Lazy, lazy);
-      model.addConstr(var <= z + bound * on_0,   format("{}_lbz",name)).set(GRB_IntAttr_Lazy, lazy);
-      model.addConstr(var <= bound * (1 - on_0), format("{}_lb0",name)).set(GRB_IntAttr_Lazy, lazy);
+      model.addConstr(var <= z + *bound * on_0,   format("{}_lbz",name)).set(GRB_IntAttr_Lazy, lazy);
+      model.addConstr(var <= *bound * (1 - on_0), format("{}_lb0",name)).set(GRB_IntAttr_Lazy, lazy);
    }
    return make_tuple(var, on_0);
 }
 
 GRBLinExpr gen_ReLU_expr(
-   GRBModel& model, const GRBLinExpr& z,  const string& name,
-   int lazy = 0,    bool use_grb = false, bool use_sos = false, bool use_bound = false, double bound = 0.0
+   GRBModel& model,      const GRBLinExpr& z,  const string& name,     int lazy = 0,
+   bool use_grb = false, bool use_sos = false, const optional<double>& bound = {}
 ) {
-   if(!use_grb || use_bound) {
-      const auto& [var, on_z] = gen_ReLU_vars(model, z, name, lazy, use_sos, use_grb, use_bound, bound);
+   if(!use_grb || bound) {
+      const auto& [var, on_z] = gen_ReLU_vars(model, z, name, lazy, use_grb, use_sos, bound);
       return var;
    }
    const auto& var = model.addVar(0, GRB_INFINITY, 0, GRB_CONTINUOUS, name);
@@ -426,65 +511,66 @@ GRBLinExpr gen_ReLU_expr(
 }
 
 GRBLinExpr gen_Hardtanh_expr(
-   GRBModel& model,      const GRBLinExpr& z, const string& name,
-   const pair<double, double>& lim = {-1,1},  int lazy = 0,
-   bool use_grb = false, bool use_sos = false, bool use_bound = false, double bound = 0.0
+   GRBModel& model,      const GRBLinExpr& z,  const string& name,
+   const pair<double, double>& lim = {-1,1},   int lazy = 0,
+   bool use_grb = false, bool use_sos = false, const optional<double>& bound = {}
 ) {
-   const auto& zl = gen_ReLU_expr(model, z - lim.first,  format("{}_z0", name), lazy, use_grb, use_sos, use_bound, bound);
-   const auto& zu = gen_ReLU_expr(model, z - lim.second, format("{}_z1", name), lazy, use_grb, use_sos, use_bound, bound);
+   const auto& zl = gen_ReLU_expr(model, z - lim.first,  format("{}_z0", name), lazy, use_grb, use_sos, bound);
+   const auto& zu = gen_ReLU_expr(model, z - lim.second, format("{}_z1", name), lazy, use_grb, use_sos, bound);
    return lim.first + zl - zu;
 }
 
 GRBLinExpr gen_Hardsigmoid_expr(
-   GRBModel& model, const GRBLinExpr& z,  const string& name,
-   int lazy = 0,    bool use_grb = false, bool use_sos = false, bool use_bound = false, double bound = 0.0
+   GRBModel& model,      const GRBLinExpr& z,  const string& name, int lazy = 0,
+   bool use_grb = false, bool use_sos = false, const optional<double>& bound = {}
 ) {
    const auto& new_z  = z / 6 + 0.5;
-   const auto& z0 = gen_ReLU_expr(model, new_z,     format("{}_z0", name), lazy, use_grb, use_sos, use_bound, bound);
-   const auto& z1 = gen_ReLU_expr(model, new_z - 1, format("{}_z1", name), lazy, use_grb, use_sos, use_bound, bound);
+   const auto& z0 = gen_ReLU_expr(model, new_z,     format("{}_z0", name), lazy, use_grb, use_sos, bound);
+   const auto& z1 = gen_ReLU_expr(model, new_z - 1, format("{}_z1", name), lazy, use_grb, use_sos, bound);
    return z0 - z1;
 }
 
 GRBLinExpr gen_ReLU6_expr(
-   GRBModel& model, const GRBLinExpr& z, const string& name,
-   int lazy = 0, bool use_grb = false, bool use_sos = false, bool use_bound = false, double bound = 0.0
+   GRBModel& model,      const GRBLinExpr& z,  const string& name, int lazy = 0,
+   bool use_grb = false, bool use_sos = false, const optional<double>& bound = {}
 ) {
-   const auto& z0 = gen_ReLU_expr(model, z,     format("{}_z0", name), lazy, use_grb, use_sos, use_bound, bound);
-   const auto& z6 = gen_ReLU_expr(model, z - 6, format("{}_z6", name), lazy, use_grb, use_sos, use_bound, bound);
+   const auto& z0 = gen_ReLU_expr(model, z,     format("{}_z0", name), lazy, use_grb, use_sos, bound);
+   const auto& z6 = gen_ReLU_expr(model, z - 6, format("{}_z6", name), lazy, use_grb, use_sos, bound);
    return z0 - z6;
 }
 
 GRBLinExpr gen_Hardshrink_expr(
-   GRBModel& model, const GRBLinExpr& z,  const string& name,
-   int lazy = 0,    bool use_sos = false, double lambda = 0.5, bool use_grb = false, bool use_bound = false, double bound = 0.0
+   GRBModel& model, const GRBLinExpr& z,  const string& name,   double lambda = 0.5, 
+   int lazy = 0,    bool use_grb = false, bool use_sos = false, const optional<double>& bound = {}
 ) {
-   const auto& [upper, on_upper0] = gen_ReLU_vars(model,   z - lambda,  name, lazy, use_sos, use_grb, use_bound, bound);
-   const auto& [lower, on_lower0] = gen_ReLU_vars(model, -(z + lambda), name, lazy, use_sos, use_grb, use_bound, bound);
-   return upper + lower + lambda * (1 - on_upper0) - lambda * (1 - on_lower0);
+   const auto& [upper, on_upper0] = gen_ReLU_vars(model,   z - lambda,  name, lazy, use_grb, use_sos, bound);
+   const auto& [lower, on_lower0] = gen_ReLU_vars(model, -(z + lambda), name, lazy, use_grb, use_sos, bound);
+   return upper + lambda * (1 - on_upper0) - lower - lambda * (1 - on_lower0);
 }
 
 GRBLinExpr gen_Softshrink_expr(
-   GRBModel& model, const GRBLinExpr& z,  const string& name,
-   int lazy = 0,    bool use_grb = false, bool use_sos = false, double lambda = 0.5, bool use_bound = false, double bound = 0.0
+   GRBModel& model,      const GRBLinExpr& z,  const string& name,   double lambda = 0.5,
+   int lazy = 0,         bool use_grb = false, bool use_sos = false, const optional<double>& bound = {}
 ) {
-   const auto& zp = gen_ReLU_expr(model,   z - lambda,  format("{}_plus",  name), lazy, use_grb, use_sos, use_bound, bound);
-   const auto& zm = gen_ReLU_expr(model, -(z + lambda), format("{}_minus", name), lazy, use_grb, use_sos, use_bound, bound);
+   const auto& zp = gen_ReLU_expr(model,   z - lambda,  format("{}_plus",  name), lazy, use_grb, use_sos, bound);
+   const auto& zm = gen_ReLU_expr(model, -(z + lambda), format("{}_minus", name), lazy, use_grb, use_sos, bound);
    return zp - zm;
 }
 
 GRBLinExpr gen_Threshold_expr(
-   GRBModel& model, const GRBLinExpr& z,  const string& name,
-   int lazy = 0,    bool use_sos = false, double threshold = 0.5, double value = 0.5, bool use_grb = false, bool use_bound = false, double bound = 0.0
+   GRBModel& model,        const GRBLinExpr& z,    const string& name, int lazy = 0,
+   bool use_sos = false,   double threshold = 0.5, double value = 0.5, bool use_grb = false,
+   const optional<double>& bound = {}
 ) {
-   const auto& [zt, on_0] = gen_ReLU_vars(model, z - threshold,  name, lazy, use_sos, use_grb, use_bound, bound);
+   const auto& [zt, on_0] = gen_ReLU_vars(model, z - threshold,  name, lazy, use_grb, use_sos, bound);
    return zt + value + (threshold - value) * (1 - on_0);
 }
 
 GRBLinExpr gen_LeakyReLU_expr(
-   GRBModel& model,     const GRBLinExpr& z, const string& name,
-   double reluc = 0.25, int lazy = 0,        bool use_grb = false, bool use_bound = false, double bound = 0.0
+   GRBModel& model,     const GRBLinExpr& z,  const string& name,     double reluc = 0.25,
+   int lazy = 0,        bool use_grb = false, const optional<double>& bound = {}
 ) {
-   const auto& z_abs = gen_abs_expr(model, z, name, use_grb, false, lazy, -20, false, use_bound, bound);
+   const auto& z_abs = gen_abs_expr(model, z, name, false, lazy, use_grb, {}, bound);
    const auto& min_z0 = (z - z_abs) / 2;
    const auto& max_z0 = (z + z_abs) / 2;
    return max_z0 + reluc * min_z0;
@@ -496,22 +582,32 @@ GRBLinExpr gen_act_w_expr(const GRBLinExprRange auto& bw) {
 
 GRBLinExpr gen_w_expr(
    GRBModel& model, const GRBLinExprRange auto& b, int exp = 4,
-   int lazy = 0,    const GRBLinExpr& tw = 0
+   double tw = 0.0, const optional<GRBVar>& iw = {}
 ) {
    vec<GRBLinExpr> exp_exprs;
    for(const auto& [l, b] : b | views::enumerate) {
       exp_exprs.emplace_back(exp2(exp - l) * (1 - b));
    }
-   return accumulate(exp_exprs.begin() + 1, exp_exprs.end(), -exp_exprs[0]) + tw;
+   if(iw) {
+      exp_exprs.emplace_back(tw * (1 - *iw));
+   }
+   return accumulate(exp_exprs.begin() + 1, exp_exprs.end(), -exp_exprs[0]);
 }
 
 GRBVar gen_w_var(
    GRBModel& model, const GRBLinExprRange auto& b, const string& name,
-   int exp = 4,     int lazy = 0,                  const GRBLinExpr& tw = 0
+   int exp = 4,     int lazy = 0,                  double tw = 0.0,
+   const optional<GRBVar>& iw = {}
 ) {
+   double ub = exp2(exp) - exp2(exp - ranges::distance(b));
+   double lb = -exp2(exp);
+   if(iw) {
+      ub += max<double>(0, tw);
+      lb -= min<double>(0, tw);
+   }
    return gen_var(
-      model, gen_w_expr(model, b, exp, lazy, tw),
-      name, -GRB_INFINITY, GRB_INFINITY,
+      model, gen_w_expr(model, b, exp, tw, iw),
+      name, lb, ub,
       GRB_CONTINUOUS, lazy
    );
 }
@@ -519,7 +615,7 @@ GRBVar gen_w_var(
 auto gen_activation_exprs(
    GRBModel& model,      const string& type,                 const GRBLinExprRange auto& z,
    const string& name,   const RangeOf<double> auto& params, int lazy = 0, 
-   bool use_grb = false, bool use_sos = false, bool use_bound = false, double bound = 0.0
+   bool use_grb = false, bool use_sos = false,               const optional<double>& bound = {}
 ) {
    vec<GRBLinExpr> a; string new_name;
    for(unsigned char c : type) {
@@ -531,7 +627,7 @@ auto gen_activation_exprs(
          a.emplace_back(gen_ReLU_expr(
             model, z,
             format("{}_{}", new_name, j),
-            lazy, use_grb, use_sos, use_bound, bound
+            lazy, use_grb, use_sos, bound
          ));
       }
    }
@@ -540,7 +636,7 @@ auto gen_activation_exprs(
          a.emplace_back(gen_ReLU6_expr(
             model, z,
             format("{}_{}", new_name, j),
-            lazy, use_grb, use_sos, use_bound, bound
+            lazy, use_grb, use_sos, bound
          ));
       }
    }
@@ -553,7 +649,7 @@ auto gen_activation_exprs(
          a.emplace_back(gen_LeakyReLU_expr(
             model, z,
             format("{}_{}", new_name, j),
-            leakyreluc, lazy, use_grb, use_bound, bound
+            leakyreluc, lazy, use_grb, bound
          ));
       }
    }
@@ -566,7 +662,7 @@ auto gen_activation_exprs(
          a.emplace_back(gen_Hardtanh_expr(
             model, z,
             format("{}_{}", new_name, j),
-            {values[0], values[1]}, lazy, use_grb, use_sos, use_bound, bound
+            {values[0], values[1]}, lazy, use_grb, use_sos, bound
          ));
       }
    }
@@ -575,7 +671,7 @@ auto gen_activation_exprs(
          a.emplace_back(gen_Hardsigmoid_expr(
             model, z,
             format("{}_{}", new_name, j),
-            lazy, use_grb, use_sos, use_bound, bound
+            lazy, use_grb, use_sos, bound
          ));
       }
    }
@@ -588,7 +684,7 @@ auto gen_activation_exprs(
          a.emplace_back(gen_Hardshrink_expr(
             model, z,
             format("{}_{}", new_name, j),
-            lazy, use_sos, values[0], use_grb, use_bound, bound
+            values[0], lazy, use_grb, use_sos, bound
          ));
       }
    }
@@ -601,7 +697,7 @@ auto gen_activation_exprs(
          a.emplace_back(gen_Softshrink_expr(
             model, z,
             format("{}_{}", new_name, j),
-            lazy, use_grb, use_sos, values[0], use_bound, bound
+            values[0], lazy, use_grb, use_sos, bound
          ));
       }
    }
@@ -614,7 +710,7 @@ auto gen_activation_exprs(
          a.emplace_back(gen_Threshold_expr(
             model, z,
             format("{}_{}", new_name, j),
-            lazy, use_sos, values[0], values[1], use_grb, use_bound, bound
+            values[0], values[1], lazy, use_grb, use_sos, bound
          ));
       }
    }
@@ -625,11 +721,12 @@ auto gen_activation_exprs(
 }
 
 GRBLinExpr gen_class_error_expr(
-   GRBModel& model,                const GRBLinExprRange auto& y, const string& name,
-   const RangeOf<double> auto& ty, int instances,                 const RangeOf<double> auto& cls_w,
-   double tol0 = 0.000000000001,   double tol = 0.1,              int lazy = 0,
-   bool use_grb = false,           bool use_square = false,       bool hint = true,
-   double offpen = 10,             bool use_bound = false,        double bound = 0.0
+   GRBModel& model,                        const GRBLinExprRange auto& y, const string& name,
+   const RangeOf<double> auto& ty,         int instances,                 const RangeOf<double> auto& cls_w,
+   double tol0 = 0.000000000001,           double tol = 0.1,              double offpen = 10,
+   int lazy = 0,                           bool use_square = false,       bool use_grb = false,
+   bool use_sos = false,                   const optional<double>& bound = {},
+   const optional<GRBVar>& is_constr = {}, const optional<int>& hint = {}
 ) {
    vec<GRBLinExpr> exprs;
    int size = ranges::distance(ty);
@@ -645,36 +742,52 @@ GRBLinExpr gen_class_error_expr(
       double cls_weight = max(tol0, cls_w_i);
       double lb_ty = bound_down(ty_i);
       double ub_ty = bound_up  (ty_i);
-      double lb_out = inverse_sigmoid(lb_ty, tol0);
-      double ub_out = inverse_sigmoid(ub_ty, tol0);
-      GRBVar lower = model.addVar(0, 1, 0, GRB_BINARY, format("{}_lower", name));
-      GRBVar upper = model.addVar(0, 1, 0, GRB_BINARY, format("{}_upper", name));
-      if(use_bound) {
-            model.addConstr(y_i <= lb_out + bound * (1 - lower)).set(GRB_IntAttr_Lazy, lazy);
-            model.addConstr(y_i >= lb_out - bound *      lower ).set(GRB_IntAttr_Lazy, lazy);
-            model.addConstr(y_i <= ub_out + bound *      upper ).set(GRB_IntAttr_Lazy, lazy);
-            model.addConstr(y_i >= ub_out - bound * (1 - upper)).set(GRB_IntAttr_Lazy, lazy);
+      double lb_out = logit(lb_ty, tol0);
+      double ub_out = logit(ub_ty, tol0);
+      GRBVar on_lower = model.addVar(0, 1, 0, GRB_BINARY, format("{}_lower", name));
+      GRBVar on_upper = model.addVar(0, 1, 0, GRB_BINARY, format("{}_upper", name));
+      if(hint) {
+         set_hint(on_lower, 0, *hint);
+         set_hint(on_upper, 0, *hint);
+      }
+      if(bound) {
+         model.addConstr(y_i >= lb_out - *bound * on_lower, format("{}_loweroff", name)).set(GRB_IntAttr_Lazy, lazy);
+         model.addConstr(y_i <= ub_out + *bound * on_upper, format("{}_upperoff", name)).set(GRB_IntAttr_Lazy, lazy);
       }
       else {
-         model.addGenConstrIndicator(lower, 1, y_i <= lb_out, format("{}_loweron",  name));
-         model.addGenConstrIndicator(lower, 0, y_i >= lb_out, format("{}_loweroff", name));
-         model.addGenConstrIndicator(upper, 0, y_i <= ub_out, format("{}_upperoff", name));
-         model.addGenConstrIndicator(upper, 1, y_i >= ub_out, format("{}_upperon",  name));
+         model.addGenConstrIndicator(on_lower, 0, y_i >= lb_out, format("{}_loweroff", name));
+         model.addGenConstrIndicator(on_upper, 0, y_i <= ub_out, format("{}_upperoff", name));
       }
+      double lb = logit(max(-tol + ty_i, bound_down(ty_i)), tol0);
+      double ub = logit(min( tol + ty_i, bound_up  (ty_i)), tol0);
+      GRBLinExpr obj_expr;
       if(!use_square) {
-         double lb = inverse_sigmoid(max(-tol + ty_i, bound_down(ty_i)), tol0);
-         double ub = inverse_sigmoid(min( tol + ty_i, bound_up  (ty_i)), tol0);
-         exprs.emplace_back((
-            gen_abs_range_obj_expr(model, y_i, name, lb, ub, lazy, use_grb, 10, hint) +
-               lower * exp(offpen) + upper * exp(offpen)
-         ) / cls_weight);
+         obj_expr = (
+            gen_abs_range_obj_expr(model, y_i, name, lb, ub, lazy, use_grb, hint) +
+               on_lower * offpen + on_upper * offpen
+         );
       }
       else {
-         double target = inverse_sigmoid(ty_i, tol0);
-         exprs.emplace_back((
-            gen_approx_square_obj_expr(model, y_i - target, name, lazy, use_grb, 10, hint) +
-               lower * exp(offpen) + upper * exp(offpen)
-         ) / cls_weight);
+         double target = logit(ty_i, tol0);
+         obj_expr = (
+            gen_approx_square_obj_expr(model, y_i - target, name, lazy, use_grb, hint) +
+               on_lower * offpen + on_upper * offpen
+         );
+      }
+      if(is_constr) {
+         const auto& obj = gen_bin_w_expr(model, *is_constr, obj_expr, format("{}_obj", name), instances / cls_weight, lazy, use_sos, bound);
+         if(bound) {
+            model.addConstr(y_i <= ub + *bound * (1 - *is_constr), format("{}_ub", name)).set(GRB_IntAttr_Lazy, lazy);
+            model.addConstr(y_i >= lb - *bound * (1 - *is_constr), format("{}_lb", name)).set(GRB_IntAttr_Lazy, lazy);
+         }
+         else {
+            model.addGenConstrIndicator(*is_constr, 1, y_i <= ub, format("{}_ub", name));
+            model.addGenConstrIndicator(*is_constr, 1, y_i >= lb, format("{}_lb", name));
+         }
+         exprs.emplace_back(obj);
+      }
+      else {
+         exprs.emplace_back(obj_expr * instances / cls_weight);
       }
    }
    else if(size > 1) {
@@ -688,34 +801,50 @@ GRBLinExpr gen_class_error_expr(
          double ub_ty = bound_up  (ty);
          double lb_out = log(max(lb_ty, tol0));
          double ub_out = log(max(ub_ty, tol0));
-         GRBVar lower = model.addVar(0, 1, 0, GRB_BINARY, format("{}_lower", name_i));
-         GRBVar upper = model.addVar(0, 1, 0, GRB_BINARY, format("{}_upper", name_i));
-         if(use_bound) {
-            model.addConstr(expr_i <= lb_out + bound * (1 - lower)).set(GRB_IntAttr_Lazy, lazy);
-            model.addConstr(expr_i >= lb_out - bound *      lower ).set(GRB_IntAttr_Lazy, lazy);
-            model.addConstr(expr_i <= ub_out + bound *      upper ).set(GRB_IntAttr_Lazy, lazy);
-            model.addConstr(expr_i >= ub_out - bound * (1 - upper)).set(GRB_IntAttr_Lazy, lazy);
+         GRBVar on_lower = model.addVar(0, 1, 0, GRB_BINARY, format("{}_lower", name_i));
+         GRBVar on_upper = model.addVar(0, 1, 0, GRB_BINARY, format("{}_upper", name_i));
+         if(hint) {
+            set_hint(on_lower, 0, *hint);
+            set_hint(on_upper, 0, *hint);
+         }
+         if(bound) {
+            model.addConstr(expr_i >= lb_out - *bound * on_lower, format("{}_loweroff", name_i)).set(GRB_IntAttr_Lazy, lazy);
+            model.addConstr(expr_i <= ub_out + *bound * on_upper, format("{}_upperoff", name_i)).set(GRB_IntAttr_Lazy, lazy);
          }
          else {
-            model.addGenConstrIndicator(lower, 1, expr_i <= lb_out, format("{}_loweron",  name_i));
-            model.addGenConstrIndicator(lower, 0, expr_i >= lb_out, format("{}_loweroff", name_i));
-            model.addGenConstrIndicator(upper, 0, expr_i <= ub_out, format("{}_upperoff", name_i));
-            model.addGenConstrIndicator(upper, 1, expr_i >= ub_out, format("{}_upperon",  name_i));
+            model.addGenConstrIndicator(on_lower, 0, expr_i >= lb_out, format("{}_loweroff", name_i));
+            model.addGenConstrIndicator(on_upper, 0, expr_i <= ub_out, format("{}_upperoff", name_i));
          }
+         double lb = log(max(max(-tol + ty, lb_ty), tol0));
+         double ub = log(max(min( tol + ty, ub_ty), tol0));
+         GRBLinExpr obj_expr;
          if(!use_square) {
-            double lb = log(max(max(-tol + ty, lb_ty), tol0));
-            double ub = log(max(min( tol + ty, ub_ty), tol0));
-            exprs.emplace_back((
-               gen_abs_range_obj_expr(model, expr_i, name_i, lb, ub, lazy, use_grb, 10, hint) +
-               lower * exp(offpen) + upper * exp(offpen)
-            ) / cls_weight);
+            obj_expr = (
+               gen_abs_range_obj_expr(model, expr_i, name_i, lb, ub, lazy, use_grb, hint) +
+               on_lower * offpen + on_upper * offpen
+            );
          }
          else {
             double target = log(max(ty, tol0));
-            exprs.emplace_back((
-               gen_approx_square_obj_expr(model, expr_i - target, name, lazy, use_grb, 10, hint) + 
-               lower * exp(offpen) + upper * exp(offpen)
-            ) / cls_weight);
+            obj_expr = (
+               gen_approx_square_obj_expr(model, expr_i - target, name, lazy, use_grb, hint) + 
+               on_lower * offpen + on_upper * offpen
+            );
+         }
+         if(is_constr) {
+            const auto& obj = gen_bin_w_expr(model, *is_constr, obj_expr, format("{}_{}_obj", name, cls), instances / cls_weight, lazy, use_sos, bound);
+            if(bound) {
+               model.addConstr(expr_i <= ub + *bound * (1 - *is_constr), format("{}_{}_ub", name, cls)).set(GRB_IntAttr_Lazy, lazy);
+               model.addConstr(expr_i >= lb - *bound * (1 - *is_constr), format("{}_{}_lb", name, cls)).set(GRB_IntAttr_Lazy, lazy);
+            }
+            else {
+               model.addGenConstrIndicator(*is_constr, 1, expr_i <= ub, format("{}_{}_ub", name, cls));
+               model.addGenConstrIndicator(*is_constr, 1, expr_i >= lb, format("{}_{}_lb", name, cls));
+            }
+            exprs.emplace_back(obj);
+         }
+         else {
+            exprs.emplace_back(obj_expr * instances / cls_weight);
          }
       }
    }
@@ -723,27 +852,40 @@ GRBLinExpr gen_class_error_expr(
 }
 
 GRBLinExpr gen_regression_error_expr(
-   GRBModel& model, const GRBLinExprRange auto& y, const string& name,
-   const RangeOf<double> auto& ty, double tol0 = 0.0001,
-   double rtol = 0.0, int lazy = 0, bool use_grb = false, bool use_sqr = false,
-   bool hint = true
+   GRBModel& model,          const GRBLinExprRange auto& y, const string& name,
+   const RangeOf<double> auto& ty,                          double tol0 = 0.0001,
+   double rtol = 0.0,        int lazy = 0,                  bool use_sqr = false,
+   bool use_grb = false,     bool use_sos = false,          const optional<double>& bound = {},
+   const optional<GRBVar>& is_constr = {},                  const optional<int>& hint = {}
 ) {
    vec<GRBLinExpr> exprs;
    for(const auto& [i, y, ty] : views::zip(views::iota(0), y, ty)) {
       const string& name_i = format("{}_{}", name, i);
       const GRBLinExpr expr_i(y - ty);
+      double ty0 = max(abs(ty), tol0);
+      double lb = -rtol * ty0;
+      double ub =  rtol * ty0;
+      GRBLinExpr obj_expr;
       if(!use_sqr) {
-         double ty0 = max(abs(ty), tol0);
-         double lb = -rtol * ty0;
-         double ub =  rtol * ty0;
-         exprs.emplace_back(
-            gen_abs_range_obj_expr(model, expr_i, name_i, lb, ub, lazy, use_grb, 10, hint)
-         );
+         obj_expr = gen_abs_range_obj_expr(model, expr_i, name_i, lb, ub, lazy, use_grb, hint);
       }
       else {
-         exprs.emplace_back(
-            gen_approx_square_obj_expr(model, expr_i, name_i, lazy, use_grb, 10, hint)
-         );
+         obj_expr = gen_approx_square_obj_expr(model, expr_i, name_i, lazy, use_grb, hint);
+      }
+      if(is_constr) {
+         const auto& obj = gen_bin_w_expr(model, *is_constr, obj_expr, format("{}_{}_obj", name, i), 1, lazy, use_sos, bound);
+         if(bound) {
+            model.addConstr(expr_i <= ub + *bound * (1 - *is_constr), format("{}_{}_ub", name, i)).set(GRB_IntAttr_Lazy, lazy);
+            model.addConstr(expr_i >= lb - *bound * (1 - *is_constr), format("{}_{}_lb", name, i)).set(GRB_IntAttr_Lazy, lazy);
+         }
+         else {
+            model.addGenConstrIndicator(*is_constr, 1, expr_i <= ub, format("{}_{}_ub", name, i));
+            model.addGenConstrIndicator(*is_constr, 1, expr_i >= lb, format("{}_{}_lb", name, i));
+         }
+         exprs.emplace_back(obj);
+      }
+      else {
+         exprs.emplace_back(obj_expr);
       }
    }
    return gen_mean_expr(exprs);
@@ -751,14 +893,15 @@ GRBLinExpr gen_regression_error_expr(
 
 GRBLinExpr gen_l1w_expr(
    GRBModel& model, const MatrixRange<GRBVar> auto& w, const string& name,
-   int lazy = 0, double tol = 0, bool use_grb = false, bool hint = true
+   double tol = 0,  int lazy = 0,                      bool use_grb = false,
+   const optional<int>& hint = {}
 ) {
    vec<GRBLinExpr> exprs;
    for(   const auto& [i, w] : w | views::enumerate) {
       for(const auto& [j, w] : w | views::enumerate) {
          exprs.emplace_back(gen_abs_range_obj_expr(
             model, w, format("{}_{}_{}", name, i, j),
-            -tol, tol, lazy, use_grb, -10, hint
+            -tol, tol, lazy, use_grb, hint
          ));
       }
    }
@@ -766,15 +909,15 @@ GRBLinExpr gen_l1w_expr(
 }
 
 GRBLinExpr gen_l2w_expr(
-   GRBModel& model, const MatrixRange<GRBVar> auto& w,
-   const string& name, int lazy = 0, bool use_grb = false, bool hint = true
+   GRBModel& model, const MatrixRange<GRBVar> auto& w, const string& name,
+   int lazy = 0,    bool use_grb = false,              const optional<int>& hint = {}
 ) {
    vec<GRBLinExpr> exprs;
    for(   const auto& [i, w] : w | views::enumerate) {
       for(const auto& [j, w] : w | views::enumerate) {
          exprs.emplace_back(gen_approx_square_obj_expr(
             model, w, format("{}_{}_{}", name, i, j),
-            lazy, use_grb, -10, hint
+            lazy, use_grb, hint
          ));
       }
    }
@@ -783,13 +926,14 @@ GRBLinExpr gen_l2w_expr(
 
 GRBLinExpr gen_l1a_expr(
    GRBModel& model, const GRBLinExprRange auto& a, const string& name,
-   int lazy = 0, double tol = 0, bool use_grb = false, bool hint = true
+   double tol = 0,  int lazy = 0,                  bool use_grb = false,
+   const optional<int>& hint = {}
 ) {
    vec<GRBLinExpr> exprs;
    for(const auto& [j, a] : a | views::enumerate) {
       exprs.emplace_back(gen_abs_range_obj_expr(
          model, a, format("{}_{}", name, j),
-         -tol, tol, lazy, use_grb, -10, hint
+         -tol, tol, lazy, use_grb, hint
       ));
    }
    return gen_mean_expr(exprs);
@@ -798,25 +942,24 @@ GRBLinExpr gen_l1a_expr(
 GRBLinExpr gen_l2a_expr(
    GRBModel& model,    const GRBLinExprRange auto& a,
    const string& name, int lazy = 0, bool use_grb = false,
-   bool hint = true
+   const optional<int>& hint = {}
 ) {
    vec<GRBLinExpr> exprs;
    for(const auto& [j, a] : a | views::enumerate) {
       exprs.emplace_back(gen_approx_square_obj_expr(
          model, a, format("{}_{}", name, j),
-         lazy, use_grb, -10, hint
+         lazy, use_grb, hint
       ));
    }
    return gen_mean_expr(exprs);
 }
 
-
 GRBLinExpr gen_wp_expr(
    GRBModel& model,       const MatrixRange<GRBVar> auto& w,
    const MatrixRange<optional<double>> auto& tw,
-   const string& name,    int lazy = 0,         double tol = 0,
-   double tol0 = 0.00001, bool use_grb = false, bool use_sqr = false,
-   bool hint = true
+   const string& name,    double tol = 0,       double tol0 = 0.00001,
+   int lazy = 0,          bool use_sqr = false, bool use_grb = false, 
+   const optional<int>& hint = {}
 ) {
    vec<GRBLinExpr> exprs;
    for(   const auto& [i, w, tw] : views::zip(views::iota(0), w, tw)) {
@@ -828,13 +971,13 @@ GRBLinExpr gen_wp_expr(
                double ub =  tol * tw0;
                exprs.emplace_back(gen_abs_range_obj_expr(
                   model, w - *tw, format("{}_{}_{}", name, i, j),
-                  lb, ub, lazy, use_grb, 5, hint
+                  lb, ub, lazy, use_grb, hint
                ));
             }
             else {
                exprs.emplace_back(gen_approx_square_obj_expr(
                   model, w - *tw, format("{}_{}_{}", name, i, j),
-                  lazy, use_grb, 5, hint
+                  lazy, use_grb, hint
                ));
             }
          }
@@ -856,33 +999,50 @@ auto gen_class_count(const Tensor3Range<double> auto& ty) {
    return cls_w;
 }
 
+auto gen_sparsity_constrs(
+   GRBModel& model,                     const Tensor4Range<GRBVar> auto& b,
+   const Tensor3Range<GRBVar> auto& iw, int lazy = 1,                       double frac = 0.0
+){
+   for(const auto& [k, b, iw] : views::zip(views::iota(0), b, iw)) {
+      vec<GRBVar> sparse;
+      for(const auto& [i, b, iw] : views::zip(views::iota(0), b, iw)) {
+         for(const auto& [j, b, iw] : views::zip(views::iota(0), b, iw)) {
+            GRBVar is_zero = model.addVar(0, 1, 0, GRB_BINARY, format("sparse_{}_{}_{}", k, i, j));
+            model.addConstr(
+               (ranges::distance(b) + 1) * is_zero <= gen_sum_expr(b) + iw,
+               format("sparse_{}_{}_{}", k, i, j)
+            ).set(GRB_IntAttr_Lazy, lazy);
+            sparse.emplace_back(is_zero);
+         }
+      }
+      model.addConstr(
+         floor(sparse.size() * frac) <= gen_sum_expr(sparse),
+         format("sparse_{}", k)
+      ).set(GRB_IntAttr_Lazy, lazy);
+   }
+}
+
 auto gen_layers(
    GRBModel& model, int layers,               const RangeOf<int> auto& cap,
    const Tensor3Range<bool> auto& mask,       const Tensor3Range<int> auto& exp,
    const Tensor3Range<int> auto& bits,        const Tensor3Range<optional<double>> auto& tw,
    const RangeOf<optional<double>> auto& l1w, const RangeOf<optional<double>> auto& l2w,
    const optional<double>& wpen,              const Tensor3Range<bool> auto& fixed,
-   int lazy = 1, bool relax_model = false,    bool use_start = false, bool use_grb = false,
-   double offtol = 0.0,                       double tol0 = 0.000001, double rtol = 0.0,
-   bool alt_model = false,                    bool use_sqr = false,
-   bool no_l1 = false, bool no_l2 = false,    bool hint = true
+   double offtol = 0.0,                       double tol0 = 0.000001,
+   double rtol = 0.0,                         int lazy = 1,
+   bool use_start = false,                    bool alt_model = false,
+   bool no_l1 = false,                        bool no_l2 = false,
+   bool use_sqr = false,                      bool use_grb = false,
+   const optional<double>& bound = {},        const optional<double>& sparsity = {},
+   const optional<int>& hint = {}
 ) {
    GRBVar one_var  = model.addVar(1, 1, 0, GRB_BINARY, "one_singleton" );
    GRBVar zero_var = model.addVar(0, 0, 0, GRB_BINARY, "zero_singleton");
    if(hint) {
-      set_hint(one_var,  1, 20); set_hint(zero_var, 0, 20);
+      set_hint(one_var,  1, *hint); set_hint(zero_var, 0, *hint);
    }
    if(use_start) {
-      int starts = 2;
-      if(relax_model && alt_model) {
-         starts += 1;
-      }
-      else if(!relax_model && !alt_model) {
-         starts += 1;
-      }
-      else if(relax_model && !alt_model) {
-         starts += 2;
-      }
+      int starts = 1 + !alt_model;
       resetline_console();
       cout << "Starts = " << starts << "\n";
       model.set(GRB_IntAttr_NumStart, starts);
@@ -891,301 +1051,224 @@ auto gen_layers(
          set_start(model, one_var,  i, 1);
       }
    }
-   ten4<GRBVar> b(layers); ten3<GRBVar> iw(layers);
+   ten4<GRBVar> b(layers); ten3<GRBVar> iw(layers), w(layers);
    vec<GRBLinExpr> mask_exprs, l1w_exprs, l2w_exprs, wpen_exprs;
-   for(    auto&& [k, b, tw, bits, mask, exp, fixed, l1w, l2w, iw, sizes] : views::zip(
-      views::iota(0), b, tw, bits, mask, exp, fixed, l1w, l2w, iw, cap | views::adjacent<2>
+   for(    auto&& [k, b, tw, bits, mask, exp, fixed, l1w, l2w, iw, w, sizes] : views::zip(
+      views::iota(0), b, tw, bits, mask, exp, fixed, l1w, l2w, iw, w, cap | views::adjacent<2>
    )) {
+      resetline_console();
+      cout << "Processing layer " << k << "..." << flush;
       const auto& [n, m] = sizes;
-      b = ten3<GRBVar>(n + 1, mat<GRBVar>(m));
-      iw = mat<GRBVar>(n + 1, vec<GRBVar>(m));
-      mat<GRBVar>    w(n + 1, vec<GRBVar>(m));
+      b  = ten3<GRBVar>(n + 1, mat<GRBVar>(m));
+      iw = mat<GRBVar>(n + 1, vec<GRBVar>(m, one_var));
+      w  = mat<GRBVar>(n + 1, vec<GRBVar>(m, zero_var));
+      mat<GRBVar>    bt(m), iwt(m), wt(m);
       for(   auto&& [i, b, w, tw, bits, exp, mask, fixed, iw] : views::zip(views::iota(0), b, w, tw, bits, exp, mask, fixed, iw)) {
          for(auto&& [j, b, w, tw, bits, exp, mask, fixed, iw] : views::zip(views::iota(0), b, w, tw, bits, exp, mask, fixed, iw)) {
-            if(!tw) {
-               model.set(GRB_IntAttr_NumStart, 1);
-            }
-            const auto& [b_floor, b_ceil] = decompose_w(tw, bits + 1);
-            b = vec<GRBVar>(bits + 1);
+            const auto& [b_floor, b_ceil] = decompose_w(tw, bits + 1, exp);
+            b = vec<GRBVar>(bits + 1, one_var);
             if(fixed) {
-               ranges::fill(b, one_var);
-               iw = zero_var;
+               if(alt_model) {
+                  iw = zero_var;
+               }
+               else {
+                  for(auto&& [b, bf] : views::zip(b, b_floor)) {
+                     if(bf == 1.0) {
+                        b = zero_var;
+                     }
+                  }
+               }
             }
-            else if(!relax_model && !mask) {
-               ranges::fill(b, one_var);
-               iw = one_var;
-            }
-            else {
+            else if(mask) {
                for(auto&& [l, b, bf, bc] : views::zip(views::iota(0), b, b_floor, b_ceil)) {
                   b = model.addVar(0, 1, 0, GRB_BINARY, format("b_{}_{}_{}_{}", k, i, j, l));
                   if(use_start) {
-                     set_start(model, b, 0, 1);
-                     if(tw && relax_model && alt_model) {
-                        set_start(model, b, 1, 1);
-                        set_start(model, b, 2, 1);
+                     int start = 0;
+                     if(alt_model) {
+                        set_start(model, b, start++, 1);
                      }
-                     else if(tw && !relax_model && alt_model) {
-                        set_start(model, b, 1, 1);
-                     }
-                     else if(tw && !relax_model && !alt_model) {
-                        set_start(model, b, 1, (1 - *bf) * mask);
-                        set_start(model, b, 2, (1 - *bc) * mask);
-                     }
-                     else if(tw && relax_model && !alt_model) {
-                        set_start(model, b, 1, (1 - *bf));
-                        set_start(model, b, 2, (1 - *bc));
-                        set_start(model, b, 3, (1 - *bf) * mask);
-                        set_start(model, b, 4, (1 - *bc) * mask);
+                     else {
+                        set_start(model, b, start++, (1 - bf));
+                        set_start(model, b, start++, (1 - bc));
                      }
                   }
                }
                if(tw && alt_model) {
                   iw = model.addVar(0, 1, 0, GRB_BINARY, format("iw_{}_{}_{}", k, i, j));
                   if(use_start) {
-                     set_start(model, iw, 0, 1);
-                     if(relax_model) {
-                        set_start(model, iw, 1, 0);
-                        set_start(model, iw, 2, !mask);
-                     }
-                     else {
-                        set_start(model, iw, 1, !mask);
-                     }
+                     int start = 0;
+                     set_start(model, iw, start++, 0);
                   }
-               }
-               else {
-                  iw = one_var;
                }
             }
             w = gen_w_var(
                model, b, format("w_{}_{}_{}", k, i, j),
-               exp, 0, tw.value_or(0.0) * (1 - iw)
+               exp, 0, tw.value_or(0.0), iw
             );
-            if(relax_model && !mask) {
-               if(!use_sqr) {
-                  mask_exprs.emplace_back(gen_abs_range_obj_expr(
-                     model, w, format("mask_{}_{}_{}", k, i, j),
-                     -offtol, offtol, lazy, use_grb, 5, hint
-                  ));
-               }
-               else {
-                  mask_exprs.emplace_back(gen_approx_square_obj_expr(
-                     model, w, format("mask_{}_{}_{}", k, i, j),
-                     lazy, use_grb, 5, hint
-                  ));
-               }
-            }
-            else if(!relax_model && !mask) {
-               w.set(GRB_DoubleAttr_LB, 0);
-               w.set(GRB_DoubleAttr_UB, 0);
-               if(hint) {
-                  set_hint(w, 0, 10);
-               }
-            }
             if(use_start) {
-               set_start(model, w, 0, 0);
-               if(tw && relax_model && alt_model) {
-                  set_start(model, w, 1, *tw);
-                  set_start(model, w, 2, *tw * mask);
-               }
-               else if(tw && !relax_model && alt_model) {
-                  set_start(model, w, 1, *tw * mask);
-               }
-               else if(tw && !relax_model && !alt_model) {
-                  set_start(model, w, 1, calculate_w(b_floor, exp) * mask);
-                  set_start(model, w, 2, calculate_w(b_ceil,  exp) * mask);
-               }
-               else if(tw && relax_model && !alt_model) {
-                  set_start(model, w, 1, calculate_w(b_floor, exp));
-                  set_start(model, w, 2, calculate_w(b_ceil,  exp));
-                  set_start(model, w, 3, calculate_w(b_floor, exp) * mask);
-                  set_start(model, w, 4, calculate_w(b_ceil,  exp) * mask);
-               }
-            } 
-         }
-      }
-      if(wpen) {
-         wpen_exprs.emplace_back(*wpen * gen_wp_expr(
-            model, w, tw, format("wp_{}", k),
-            lazy, rtol, tol0, use_grb, use_sqr, hint
-         ));
-      }
-      if(!no_l1 && l1w && k + 1 < layers) {
-         l1w_exprs.emplace_back(*l1w * gen_l1w_expr(
-            model, w, format("l1w_{}", k),
-            lazy, offtol, use_grb, hint
-         ));
-      }
-      if(!no_l2 && l2w && k + 1 < layers) {
-         l2w_exprs.emplace_back(*l2w * gen_l2w_expr(
-            model, w, format("l2w_{}", k),
-            lazy, use_grb, hint
-         ));
-      }
-   }
-   return make_tuple(b, mask_exprs, l1w_exprs, l2w_exprs, wpen_exprs, iw);
-}
-
-auto gen_dropout_exprs(
-   GRBModel& model,    const GRBLinExprRange auto& a, const RangeOf<bool> auto& drop,
-   const string& name, bool relax_model = false,      int lazy = 1,
-   double dtol = 0.0,  bool use_grb = true,           bool use_sqr = false,
-   bool hint = true
-) {
-   GRBLinExpr obj_expr; vec<GRBLinExpr> a_exprs(ranges::begin(a), ranges::end(a));
-   if(relax_model) {
-      vec<GRBLinExpr> drop_exprs;
-      for(const auto& [i, a, drop] : views::zip(views::iota(0), a, drop)) {
-         if(drop) {
-            if(!use_sqr) {
-               drop_exprs.emplace_back(gen_abs_range_obj_expr(
-                  model, a, format("{}_{}", name, i),
-                  -dtol, dtol, lazy, use_grb, 5, hint
-               ));
-            }
-            else {
-               drop_exprs.emplace_back(gen_approx_square_obj_expr(
-                  model, a, format("{}_{}", name, i), lazy, use_grb, 5, hint
-               ));
-            }
-         }
-      }
-      obj_expr = gen_mean_expr(drop_exprs);
-   }
-   else {
-      for(auto&& [a_expr, drop] : views::zip(a_exprs, drop)) {
-         if(drop) {
-            a_expr = 0;
-         }
-      }
-   }
-   return make_tuple(a_exprs, obj_expr);
-}
-
-auto gen_connection_dropout_exprs(
-   GRBModel& model,                    const GRBLinExprRange auto& a,
-   const Tensor3Range<GRBVar> auto& b, int n, int m,                     const MatrixRange<bool> auto& cdrop,
-   const MatrixRange<bool> auto& mask, const MatrixRange<int> auto& exp, const MatrixRange<optional<double>> auto& tw,
-   const MatrixRange<GRBVar> auto& iw, const string& name,               bool relax_model = false,
-   int lazy = 1,                       double dtol = 0.0,                bool use_grb = true,
-   bool alt_model = false,             bool use_sqr = false,             bool hint = true,
-   bool use_sos = false,               bool use_bound = false,           double bound = 0.0
-) {
-   GRBLinExpr obj_expr; mat<GRBLinExpr> aw_exprs(m, vec<GRBLinExpr>(n + 1));
-   if(relax_model) {
-      vec<GRBLinExpr> drop_exprs;
-      for(const auto& [i, b, a, exp, cdrop, mask, tw, iw] : views::zip(views::iota(0), b, a, exp, cdrop, mask, tw, iw)) {
-         for(const auto& [j, b, exp, cdrop, mask, tw, iw] : views::zip(views::iota(0), b,    exp, cdrop, mask, tw, iw)) {
-            if(tw && alt_model) {
-               aw_exprs[j][i] += gen_bin_w_expr(
-                  model, iw, a, format("{}_{}_{}_w", name, i, j), *tw, lazy, use_sos, use_bound, bound
-               );
-            }
-            vec<GRBLinExpr> bin_w;
-            int bits = ranges::distance(b);
-            for(const auto& [l, b] : b | views::enumerate) {
-               bin_w.emplace_back(exp2(exp - bits) * gen_bin_w_expr(
-                  model, b, a, format("{}_{}_{}_{}", name, i, j, l), exp2(bits - l), lazy, use_sos, use_bound, bound
-               ));
-            }
-            aw_exprs[j][i] += gen_act_w_expr(bin_w);
-            if(cdrop) {
-               if(!use_sqr) {
-                  drop_exprs.emplace_back(gen_abs_range_obj_expr(
-                     model, aw_exprs[j][i], format("{}_{}_{}_condrop", name, i, j),
-                     -dtol, dtol, lazy, use_grb, 5, hint
-                  ));
+               int start = 0;
+               if(alt_model) {
+                  set_start(model, w, start++, tw.value_or(0.0) * mask);
                }
                else {
-                  drop_exprs.emplace_back(gen_approx_square_obj_expr(
-                     model, aw_exprs[j][i], format("{}_{}_{}_condrop", name, i, j),
-                     lazy, use_grb, 5, hint
-                  ));
+                  set_start(model, w, start++, calculate_w(b_floor, exp) * mask);
+                  if(!fixed) {
+                     set_start(model, w, start++, calculate_w(b_ceil,  exp) * mask);
+                  }
+                  else {
+                     set_start(model, w, start++, calculate_w(b_floor, exp) * mask);
+                  }
                }
             }
          }
       }
-      obj_expr = gen_mean_expr(drop_exprs);
    }
-   else {
-      for(const auto& [i, b, a, exp, cdrop, mask, tw, iw] : views::zip(views::iota(0), b, a, exp, cdrop, mask, tw, iw)) {
-         for(const auto& [j, b, exp, cdrop, mask, tw, iw] : views::zip(views::iota(0), b,    exp, cdrop, mask, tw, iw)) {
-            if(mask && !cdrop) {
-               if(tw && alt_model) {
-                  aw_exprs[j][i] += gen_bin_w_expr(
-                     model, iw, a, format("{}_{}_{}_w", name, i, j), *tw, lazy, use_sos, use_bound, bound
-                  );
-               }
-               vec<GRBLinExpr> bin_w;
-               for(const auto& [l, b] : b | views::enumerate) {
-                  bin_w.emplace_back(gen_bin_w_expr(
-                     model, b, a, format("{}_{}_{}_{}", name, i, j, l), exp2(exp - l), lazy, use_sos, use_bound, bound
-                  ));
-               }
-               aw_exprs[j][i] += gen_act_w_expr(bin_w);
-            }
+   if(wpen) {
+      for(const auto& [k, w, tw] : views::zip(views::iota(0), w, tw)) {
+         wpen_exprs.emplace_back(*wpen * gen_wp_expr(
+            model, w, tw, format("wp_{}", k), rtol, tol0,
+            lazy, use_sqr, use_grb, hint
+         ));
+      }
+   }
+   if(!no_l1) {
+      for(const auto& [k, w, l1w] : views::zip(views::iota(0), w, l1w) | views::take(layers - 1)) {
+         if(l1w) {
+            l1w_exprs.emplace_back(*l1w * gen_l1w_expr(
+               model, w, format("l1w_{}", k),
+               offtol, lazy, use_grb, hint
+            ));
          }
       }
    }
-   const auto& z = aw_exprs | views::transform(gen_sum_expr<decltype(aw_exprs)::value_type>) | views::common;
-   return make_tuple(vec<GRBLinExpr>(z.begin(), z.end()), obj_expr);
+   if(!no_l2) {
+      for(const auto& [k, w, l2w] : views::zip(views::iota(0), w, l2w) | views::take(layers - 1)) {
+         if(l2w) {
+            l2w_exprs.emplace_back(*l2w * gen_l2w_expr(
+               model, w, format("l2w_{}", k),
+               lazy, use_grb, hint
+            ));
+         }
+      }
+   }
+   if(sparsity) {
+      gen_sparsity_constrs(model, b, iw, lazy, *sparsity);
+   }
+   return make_tuple(b, l1w_exprs, l2w_exprs, wpen_exprs, iw, w);
 }
 
-auto get_model(
-   const GRBEnv& environment,          int instances, int layers,                      const RangeOf<int> auto& cap,
+auto gen_model(
+   GRBModel& model,                    int instances, int layers,                      const RangeOf<int> auto& cap,
    const RangeOf<string> auto& af,     const Tensor3Range<bool> auto& mask,            const Tensor3Range<int> auto& exp,
    const Tensor3Range<int> auto& bits, const Tensor3Range<optional<double>> auto& tw,  const RangeOf<double> auto& bias,
-   const MatrixRange<double> auto& params,
-   const MatrixRange<bool> auto& drop, const RangeOf<optional<double>> auto& l1a,      const RangeOf<optional<double>> auto& l1w,
-   const RangeOf<optional<double>> auto& l2a,                                          const RangeOf<optional<double>> auto& l2w,
-   const optional<double>& wpen,       const Tensor3Range<bool> auto& fixed,           const Tensor3Range<bool> auto& cdrop,
-   const MatrixRange<double> auto& fx, const Tensor3Range<double> auto& reg_ty,        const Tensor3Range<double> auto& class_ty,
-   double tol0 = 0.000000000001,       double relax_frac = 0.0, double rtol = 0.1,     int lazy = 1, bool relax_model = false,
-   double err_prio = 1.0,              bool use_start = false, bool use_grb = false,   bool use_sos = false,
-   double offtol = 0.0,                bool alt_model = false, bool use_sqr = false,   bool no_l1 = false, bool no_l2 = false,
-   bool hint = true,                   double offpen = 10,     bool use_bound = false, double bound = 0.0
+   const MatrixRange<double> auto& params,                                             const RangeOf<optional<double>> auto& adrop,
+   const RangeOf<optional<double>> auto& cdrop,                                        const RangeOf<optional<double>> auto& l1a,
+   const RangeOf<optional<double>> auto& l1w,                                          const RangeOf<optional<double>> auto& l2a,
+   const RangeOf<optional<double>> auto& l2w,                                          const optional<double>& wpen,
+   const Tensor3Range<bool> auto& fixed,                                               const MatrixRange<double> auto& fx,
+   const Tensor3Range<double> auto& reg_ty,                                            const Tensor3Range<double> auto& class_ty,
+   double tol0 = 0.000000000001,       double rtol = 0.1,                              double offtol = 0.0,
+   double err_prio = 1.0,              double offpen = 10,                             bool use_start = false,
+   bool alt_model = false,             bool no_l1 = false,                             bool no_l2 = false,
+   bool no_drops = false,              bool no_hint = false,                           bool use_sqr = false,
+   bool use_grb = false,               bool use_sos = false,                           const optional<double>& bound = {},
+   const optional<double>& sparsity = {},                                              const optional<double>& relax_frac = {},
+   const optional<int>& lazy = {}
 ) {
-   GRBModel model(environment);
    resetline_console();
    cout << "Processing layers variables..." << flush;
-   const auto& [b, mask_exprs, l1w_exprs, l2w_exprs, wpen_exprs, iw] = gen_layers(
-      model, layers, cap, mask, exp, bits, tw, l1w, l2w, wpen, fixed, lazy, relax_model, use_start,
-      use_grb, offtol, tol0, rtol, alt_model, use_sqr, no_l1, no_l2, hint
+   const auto& [b, l1w_exprs, l2w_exprs, wpen_exprs, iw, w] = gen_layers(
+      model, layers, cap, mask, exp, bits, tw, l1w, l2w, wpen, fixed,  offtol, tol0, rtol,
+      lazy.value_or(0), use_start, alt_model, no_l1, no_l2, use_sqr, use_grb, bound, sparsity,
+      (no_hint ? optional<int>() : optional<int>(20))
    );
-   vec<GRBLinExpr> drop_exprs, cdrop_exprs, l1a_exprs, l2a_exprs, target_exprs;
+   vec<GRBLinExpr> l1a_exprs, l2a_exprs, target_exprs;
    const auto& cls_w = gen_class_count(class_ty);
-   int relax_size = relax_frac * instances;
+   vec<GRBVar> constrs;
    for(const auto& [t, fx] : fx | views::enumerate) {
       resetline_console();
-      cout << "Processing case: " << t << "...\n" << flush;
-      vec<GRBLinExpr> a(ranges::begin(fx), ranges::end(fx)), l1a_exprs_i, l2a_exprs_i, target_exprs_i;
-      for(const auto& [k, b, af, exp, drop, params, cdrop, l1a, l2a, bias, mask, tw, iw, sizes] :
-      views::zip(
-         views::iota (0), b, af, exp, drop, params, cdrop, l1a, l2a, bias, mask, tw, iw, cap | views::adjacent<2>
-      )) {
+      cout << "Processing instance " << t << "...\n" << flush;
+      mat<GRBLinExpr> a(layers + 1);
+      ranges::copy(fx, back_inserter(a[0]));
+      vec<GRBLinExpr> l1a_exprs_i, l2a_exprs_i, target_exprs_i;
+      for(
+         auto&&                 [k, b, iw, tw,         atup,           fx, bias, l1a, l2a, cdrop, adrop, exp, af, params] :
+         views::zip(views::iota(0), b, iw, tw, a | views::adjacent<2>, fx, bias, l1a, l2a, cdrop, adrop, exp, af, params)
+      ) {
          resetline_console();
-         cout << "Processing layer: " << k << "..." << flush;
-         const auto& [n, m] = sizes;
-         a.emplace_back(bias);
-         const auto& [drop_a, drop_expr] = gen_dropout_exprs(
-            model, a, drop, format("drop_{}_{}", t, k),
-            relax_model, lazy, offtol, use_grb, use_sqr, hint
-         );
-         drop_exprs.emplace_back(drop_expr);
-         const auto& [z, cdrop_expr] = gen_connection_dropout_exprs(
-            model, drop_a, b, n, m, cdrop, mask, exp, tw, iw,
-            format("bw_{}_{}", t, k), relax_model, lazy,
-            offtol, use_grb, alt_model, use_sqr, hint, use_sos, use_bound, bound
-         );
-         cdrop_exprs.emplace_back(cdrop_expr);
-         a = gen_activation_exprs(model, af, z, format("act_{}_{}", t, k), params, lazy, use_grb, use_sos, use_bound, bound);
-         if(!no_l1 && l1a && k + 1 < layers) {
-            l1a_exprs_i.emplace_back(*l1a * gen_l1a_expr(model, a, format("l1a_{}_{}", t, k), lazy, offtol, use_grb, hint));
+         cout << "Processing layer " << k << "..." << flush;
+         auto&& [z0, z1] = atup;
+         z0.emplace_back(bias);
+         vec<GRBLinExpr> z;
+         if(adrop && !no_drops) {
+            vec<GRBLinExpr> actdrop;
+            for(const auto& [i, z0] : z0 | views::enumerate) {
+               GRBVar is_zero = model.addVar(0, 1, 0, GRB_BINARY, format("actdrop_{}_{}_{}", t, k, i));
+               z.emplace_back(gen_bin_w_expr(
+                  model, is_zero, z0, format("actdropa_{}_{}_{}", t, k, i),
+                  1, lazy.value_or(2), use_sos, bound
+               ));
+               actdrop.emplace_back(is_zero);
+            }
+            model.addConstr(
+               int(actdrop.size() * (*adrop)) >= gen_sum_expr(actdrop),
+               format("actdrop_{}_{}", t, k)
+            ).set(GRB_IntAttr_Lazy, lazy.value_or(2));
          }
-         if(!no_l2 && l2a && k + 1 < layers) {
-            l2a_exprs_i.emplace_back(*l2a * gen_l2a_expr(model, a, format("l2a_{}_{}", t, k), lazy, use_grb, hint));
+         else {
+            ranges::copy(z0, back_inserter(z));
+         }
+         int j_max = -1;
+         vec<GRBVar> condrop; mat<GRBLinExpr> aw;
+         for(const auto& [i, b, iw, tw, exp, z] : views::zip(views::iota(0), b, iw, tw, exp, z)) {
+            for(const auto& [j, b, iw, tw, exp] : views::zip(views::iota(0), b, iw, tw, exp)) {
+               if(j_max < j) {
+                  aw.emplace_back(vec<GRBLinExpr>());
+                  j_max = j;
+               }
+               GRBLinExpr actw;
+               if(tw) {
+                  actw += gen_bin_w_expr(
+                     model, iw, z, format("iwa_{}_{}_{}_{}", t, k, i, j),
+                     *tw, lazy.value_or(2), use_sos, bound
+                  );
+               }
+               vec<GRBLinExpr> bw;
+               for(const auto& [l, b] : b | views::enumerate) {
+                  bw.emplace_back(gen_bin_w_expr(
+                     model, b, z, format("bw_{}_{}_{}_{}_{}", t, k, i, j, l),
+                     exp2(exp - l), lazy.value_or(2), use_sos, bound
+                  ));
+               }
+               actw += gen_act_w_expr(bw);
+               if(cdrop && !no_drops) {
+                  GRBVar is_zero = model.addVar(0, 1, 0, GRB_BINARY, format("condrop_{}_{}_{}", k, i, j));
+                  aw[j].emplace_back(gen_bin_w_expr(
+                     model, is_zero, actw, format("condropa_{}_{}_{}", k, i, j),
+                     1, lazy.value_or(2), use_sos, bound
+                  ));
+                  condrop.emplace_back(is_zero);
+               }
+               else {
+                  aw[j].emplace_back(actw);
+               }
+            }
+         }
+         ranges::move(aw | views::transform(gen_sum_expr<decltype(aw)::value_type>), z.begin());
+         z1 = gen_activation_exprs(model, af, z, format("act_{}_{}", t, k), params, lazy.value_or(2), use_grb, use_sos, bound);
+         if(cdrop && !no_drops) {
+            model.addConstr(
+               int(condrop.size() * (*cdrop)) >= gen_sum_expr(condrop),
+               format("condrop_{}_{}", t, k)
+            ).set(GRB_IntAttr_Lazy, lazy.value_or(2));
          }
       }
       int asize = 0;
+      optional<GRBVar> is_constr;
+      if(relax_frac) {
+         is_constr = model.addVar(0, 1, 0, GRB_BINARY, format("isconstr_{}", t));
+         constrs.emplace_back(*is_constr);
+      }
       for(const auto& [ti, ty, cls_w] : views::zip(
          views::iota  (0), class_ty, cls_w
       )) {
@@ -1193,11 +1276,11 @@ auto get_model(
          int size = ranges::distance(ty_i);
          if(size > 0) {
             vec<GRBLinExpr> y;
-            ranges::move(a | views::drop(asize) | views::take(size), back_inserter(y));
+            ranges::copy(a.back() | views::drop(asize) | views::take(size), back_inserter(y));
             target_exprs_i.emplace_back(gen_class_error_expr(
                model, y, format("cls_{}_{}", t, ti), ty_i, instances, cls_w,
-               tol0, t < relax_size ? rtol : 0.0, lazy, use_grb, use_sqr, hint, offpen,
-               use_bound, bound
+               tol0, rtol, offpen, lazy.value_or(2), use_sqr, use_grb, use_sos, 
+               bound, is_constr, (no_hint ? optional<int>() : optional<int>(10))
             ));
             asize += size;
          }
@@ -1207,19 +1290,36 @@ auto get_model(
          int size = ranges::distance(ty_i);
          if (size > 0) {
             vec<GRBLinExpr> y;
-            ranges::move(a | views::drop(asize) | views::take(size), back_inserter(y));
+            ranges::copy(a.back() | views::drop(asize) | views::take(size), back_inserter(y));
             target_exprs_i.emplace_back(gen_regression_error_expr(
-               model, y, format("reg_{}_{}", t, ti), ty_i, tol0,
-               t < relax_size ? rtol : 0.0, lazy, use_grb, use_sqr, hint
+               model, y, format("reg_{}_{}", t, ti), ty_i, tol0, rtol,
+               lazy.value_or(2), use_sqr, use_grb, use_sos,
+               bound, is_constr, (no_hint ? optional<int>() : optional<int>(10))
             ));
             asize += size;
          }
       }
-      if(l2a_exprs_i.size() > 0) {
-         l2a_exprs.emplace_back(gen_mean_expr(l2a_exprs_i));
-      }
-      if(l1a_exprs_i.size() > 0) {
+      if(!no_l1) {
+         for(const auto& [k, a, l1a] : views::zip(views::iota(0), a | views::drop(1) | views::take(layers - 1), l1a)) {
+            if(l1a) {
+               l1a_exprs_i.emplace_back(*l1a * gen_l1a_expr(
+                  model, a, format("l1a_{}_{}", t, k), lazy.value_or(2), offtol, use_grb,
+                  (no_hint ? optional<int>() : optional<int>(10))
+               ));
+            }
+         }
          l1a_exprs.emplace_back(gen_mean_expr(l1a_exprs_i));
+      }
+      if(!no_l2) {
+         for(const auto& [k, a, l2a] : views::zip(views::iota(0), a | views::drop(1) | views::take(layers - 1), l2a)) {
+            if(l2a) {
+               l2a_exprs_i.emplace_back(*l2a * gen_l2a_expr(
+                  model, a, format("l2a_{}_{}", t, k), lazy.value_or(2), use_grb,
+                  (no_hint ? optional<int>() : optional<int>(10))
+               ));
+            }
+         }
+         l2a_exprs.emplace_back(gen_mean_expr(l2a_exprs_i));
       }
       if(target_exprs_i.size() > 0) {
          target_exprs.emplace_back(gen_mean_expr(target_exprs_i));
@@ -1227,59 +1327,26 @@ auto get_model(
       resetline_console();
       cursorup_console(1);
    }
+   if(relax_frac) {
+      model.addConstr(
+         floor((1 - *relax_frac) * instances) >= gen_sum_expr(constrs),
+         format("Relaxed_{}", int((1 - *relax_frac) * instances))
+      ).set(GRB_IntAttr_Lazy, lazy.value_or(2));
+   }
    resetline_console();
    cursorup_console(1);
    resetline_console();
+   double div = relax_frac ? max<double>(1, floor(*relax_frac * instances)) : instances;
    model.setObjective(
+      instances * gen_sum_expr(wpen_exprs) +
       instances * layers * (
-         err_prio * gen_mean_expr(target_exprs) +
+         err_prio * gen_sum_expr(target_exprs) / div +
          gen_mean_expr(l1a_exprs) + gen_mean_expr(l1w_exprs) +
-         gen_mean_expr(l2a_exprs) + gen_mean_expr(l2w_exprs) +
-         gen_mean_expr(wpen_exprs) + gen_mean_expr(drop_exprs) +
-         gen_mean_expr(cdrop_exprs) + gen_mean_expr(mask_exprs)
-      ),
+         gen_mean_expr(l2a_exprs) + gen_mean_expr(l2w_exprs)
+      ) + 1,
       GRB_MINIMIZE
    );
-   return model;
-}
-
-/// 
-/// Funciones relacionadas a main o lectura de datos
-/// 
-
-template<typename G>
-auto gen_dropout_func(G&& generator, const optional<double>& dropout) {
-   return [&generator, &dropout] () {
-      return dropout.transform([&generator] (double dropout) {
-         return bernoulli_distribution(dropout)(generator);
-      }).value_or(false);
-   };
-}
-
-template<typename G>
-auto generate_dropouts(
-   const RangeOf<int> auto& cap, const RangeOf<optional<double>> auto& dropout,
-   const RangeOf<optional<double>> auto& connection_dropout, G&& generator, bool no_dropouts = false
-) {
-   vec<vec<bool>> dropout_bool  (ranges::distance(cap) - 1);
-   vec<mat<bool>> c_dropout_bool(ranges::distance(cap) - 1);
-   for(auto&& [k, db, pd, cdb, cpd, sizes] : views::zip(
-      views::iota(0), dropout_bool, dropout, c_dropout_bool, connection_dropout, cap | views::adjacent<2>
-   )) {
-      const auto& [n, m] = sizes;
-      db = vec<bool>(n + 1, false);
-      cdb = mat<bool>(n + 1);
-      if(!no_dropouts) {
-         ranges::generate(db, gen_dropout_func(generator, pd));
-      }
-      for(auto& cdb : cdb) {
-         cdb = vec<bool>(m, false);
-         if(!no_dropouts) {
-            ranges::generate(cdb, gen_dropout_func(generator, cpd));
-         }
-      }
-   }
-   return make_tuple(dropout_bool, c_dropout_bool);
+   return make_tuple(b, iw);
 }
 
 template<typename T>
@@ -1404,7 +1471,7 @@ auto clamp_layers_matrix(const Tensor3Range<T> auto& layers_matrix, T min_value,
       for(auto&& [a, b] : views::zip(a, b)) {
          a = vec<T>(ranges::distance(b));
          for(auto&& [a, b] : views::zip(a, b)) {
-            a = min(max_value, max(min_value, b));
+            a = clamp(b, min_value, max_value);
          }
       }
    }
@@ -1421,12 +1488,12 @@ variant< unordered_map< string, vec<string> >, string > process_opts(
       {"no_opti",           0}, {"exp",               0}, {"mask",              0}, {"params",            0},
       {"fixed",             0}, {"bits",              0}, {"no_l1",             0}, {"no_l2",             0},
       {"no_drop",           0}, {"tol0",              1}, {"reltol",            1}, {"relax_frac",        1},
-      {"err_prio",          1}, {"relax_model",       0}, {"init",              0}, {"start",             0},
+      {"err_prio",          1}, {"init",              0}, {"start",             0},
       {"grb_con",           0}, {"alt_model",         0}, {"sos",               0}, {"square",            0},
       {"min_bits",          1}, {"max_bits",          1}, {"min_exp",           1}, {"max_exp",           1},
       {"lazy",              1}, {"offtol",            1}, {"wpen",              1}, {"seed",              1},
       {"no_hint",           0}, {"no_index",          0}, {"no_header",         0}, {"offpen",            1},
-      {"samples",           1}, {"no_shuffle",        0}, {"bound",             1}
+      {"samples",           1}, {"no_shuffle",        0}, {"bound",             1}, {"sparsity",          1}
    };
    unordered_map< string, vec<string> > processed_opts;
    int argi = 1;
@@ -1684,8 +1751,8 @@ int main(int argc, const char* argv[]) try {
    // Procesa las rutas de los archivos a leer
    bool index       = !opts.contains("no_index" );
    bool header      = !opts.contains("no_header");
-   path save_path   = opts.contains("save_path") ? opts["save_path"][0] : "";
-   path load_path   = opts.contains("load_path") ? opts["load_path"][0] : "";
+   path save_path   = opts.contains("save_path") ? opts["save_path"][0] : ".";
+   path load_path   = opts.contains("load_path") ? opts["load_path"][0] : ".";
    string save_name = opts.contains("save_name") ? opts["save_name"][0] : "model";
    string load_name = opts.contains("load_name") ? opts["load_name"][0] : "";
    // Lee las caracteristicas de la arquitectura y la base de datos
@@ -1766,7 +1833,7 @@ int main(int argc, const char* argv[]) try {
    vec<mat<optional<double>>> init_w;
    if(opts.contains("init")) {
       path file_path = load_path / format("{}.csv", safe_suffix(load_name, "init"));
-      const auto& [dim, data] = read_list_from_csv<double>(fstream(file_path));
+      const auto& [dim, data] = read_list_from_csv<double>(fstream(file_path), true);
       init_w = get_layers_matrix<optional<double>, double>(data, C);
    }
    if(init_w.empty()) {
@@ -1807,7 +1874,7 @@ int main(int argc, const char* argv[]) try {
    process_yes_arg(opts, "reltol", [&constraint_tolerance](const auto& args) {
       stringstream(args[0]) >> constraint_tolerance;
    });
-   double constraint_frac = 0.0;
+   optional<double> constraint_frac;
    process_yes_arg(opts, "relax_frac", [&constraint_frac](const auto& args) {
       stringstream(args[0]) >> constraint_frac;
    });
@@ -1815,7 +1882,7 @@ int main(int argc, const char* argv[]) try {
    process_yes_arg(opts, "offtol", [&zero_off_tolerance](const auto& args) {
       stringstream(args[0]) >> zero_off_tolerance;
    });
-   int lazy = 1;
+   optional<int> lazy;
    process_yes_arg(opts, "lazy", [&lazy](const auto& args) {
       stringstream(args[0]) >> lazy;
    });
@@ -1827,15 +1894,17 @@ int main(int argc, const char* argv[]) try {
    process_yes_arg(opts, "samples", [&samples](const auto& args) {
       stringstream(args[0]) >> samples;
    });
-   double bound = 10;
+   optional<double> bound;
    process_yes_arg(opts, "bound", [&bound](const auto& args) {
       stringstream(args[0]) >> bound;
    });
-   bool use_bound         =  opts.contains("bound"            );
+   optional<double> sparsity;
+   process_yes_arg(opts, "sparsity", [&sparsity](const auto& args) {
+      stringstream(args[0]) >> sparsity;
+   });
    bool use_sos           =  opts.contains("sos"              );
    bool no_shuffle        =  opts.contains("no_shuffle"       );
    bool use_gurobi        =  opts.contains("grb_con"          );
-   bool relaxed_model     =  opts.contains("relax_model"      );
    bool alternative_model =  opts.contains("alt_model"        );
    bool use_start         =  opts.contains("start"            );
    bool optimize          = !opts.contains("no_opti"          );
@@ -1866,10 +1935,12 @@ int main(int argc, const char* argv[]) try {
    cout << "Numero de instancias " << T << "\n";
    // Genera los vectores de desactivar entradas o conexiones en la red neuronal, utilizando una semilla
    // o utilizado de manera aleatoria en caso de no proporcionarla
-   const auto& [db, cdb] = generate_dropouts(C, dropout, c_drop, generator, no_dropouts);
    process_env(ambiente, opts);
-   GRBModel modelo = get_model(
-      /* GRBEnv ambiente gurobi */ambiente,
+   GRBModel modelo(ambiente);
+   NNGRBCallback cb(save_path);
+   modelo.setCallback(&cb);
+   const auto& [b, iw] = gen_model(
+      /* GRBEnv ambiente gurobi */modelo,
       /* Numero de casos T */ T,
       /* Numero de capas L */ L,
       /* Capacidad o numero de neuronas por capa */ C,
@@ -1880,40 +1951,41 @@ int main(int argc, const char* argv[]) try {
       /* Valor inicial o esperado de los pesos */init_w,
       /* Valor de los umbrales o bias */ bias,
       /* Parametros de las funciones de activacion */ params,
-      /* Probabilidades de volver cero alguna entrada */ db,
+      /* Probabilidades de volver cero alguna entrada */ dropout,
+      /* Probabilidades de desactivar conexiones */ c_drop,
       /* Regularización L1 sobre activacion */ l1a_norm,
       /* Regularización L1 sobre pesos */ l1w_norm,
       /* Regularización L2 sobre activacion */ l2a_norm,
       /* Regularización L2 sobre pesos */ l2w_norm,
       /* Penalización por alejarse de la solución inicial */ weight_penalty,
       /* Mantener fijo los pesos */ fixed,
-      /* Probabilidades de desactivar conexiones */ cdb,
       /* Matriz de las caracteristicas */ ftrs,
       /* Matriz de la regresion esperada */ reg_tgts,
       /* Matriz de la clasificacion deseada */ cls_tgts,
       /* Tolerancia utilizada en el logaritmo */ zero_tolerance,
-      /* Porcentaje de casos usados para restricciones */ constraint_frac,
       /* Porcentaje de error o tolerancia sobre las restricciones */ constraint_tolerance,
-      /* Tipo de restriccion en gurobi para restricciones no escenciales */ lazy,
-      /* Usar penalizaciones en lugar de restricciones para mascaras y dropouts */ relaxed_model,
-      /* Prioridad o importancia que se le da más al error que a otras regularizaciones */ error_priority,
-      /* Usar inicio de los pesos iniciales */ use_start,
-      /* Usar restricciones proporcionadas por gurobi */ use_gurobi,
-      /* Usar restricciones tipo SOS1 */ use_sos,
       /* Usar tolerancia para los ceros en las matrices */ zero_off_tolerance,
+      /* Prioridad o importancia que se le da más al error que a otras regularizaciones */ error_priority,
+      /* Utilizar la penalizacion por fuera del minimo o maximo */ offpen,
+      /* Usar inicio de los pesos iniciales */ use_start,
       /* Usar modelo alternativo donde es un offset de los pesos iniciales */ alternative_model,
-      /* Usar aproximacion de error cuadratico */ use_square,
       /* No usar L1 */ no_l1,
       /* No usar L2 */ no_l2,
-      /* No usar las pistas */ hint,
-      /* Utilizar la penalizacion por fuera del minimo o maximo */ offpen,
-      use_bound,
-      bound
+      no_dropouts,
+      /* No usar las pistas */ !hint,
+      /* Usar aproximacion de error cuadratico */ use_square,
+      /* Usar restricciones proporcionadas por gurobi */ use_gurobi,
+      /* Usar restricciones tipo SOS1 */ use_sos,
+      bound,
+      sparsity,
+      /* Porcentaje de casos usados para restricciones */ constraint_frac,
+      /* Tipo de restriccion en gurobi para restricciones no escenciales */ lazy
    );
+   cb.set_binary(b, precision, iw, init_w);
+   modelo.update();
    if(save_lp)
       modelo.write(path(format("{}.lp.7z", file_path)).string());
    if(optimize) {
-      modelo.update();
       modelo.optimize();
       switch(modelo.get(GRB_IntAttr_Status)) {
          case GRB_OPTIMAL :

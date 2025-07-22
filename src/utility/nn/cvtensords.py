@@ -3,9 +3,9 @@ Modulo que contiene los metodos para realizar
 validacion cruzada con scikit learn y pytorch
 """
 from collections.abc import Iterable
-from matplotlib.pylab import PCG64, SeedSequence
 import numpy
 import numpy.random as numpyrand
+from numpy.random import SeedSequence, PCG64
 from numpy import ndarray, uint64
 from numpy.typing import ArrayLike
 from pandas import DataFrame, Index

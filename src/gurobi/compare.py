@@ -11,8 +11,8 @@ from src.utility.io.model import load_model
 from src.utility.nn.stats import (
     accuracy_comparation, binomial_test, stats_dataframe, weight_comparation
 )
+from src.utility.nn.lineal import LinealNN
 from trainers.datasets import CrossvalidationDataset
-from utility.nn.lineal import LinealNN
 
 
 def save_log(
