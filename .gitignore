@@ -3,5 +3,8 @@
 *.raw
 *.ps
 *.png
-/src/utility/nn/__pycache__
 *.onnx
+*.pyc
+*.pdf
+*.pyc
+/src/utility/nn/__pycache__
