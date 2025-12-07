@@ -17,32 +17,18 @@ from torch.nn import (
     Identity, LogSigmoid, Softsign, ModuleList, ConstantPad1d,
     Parameter
 )
-from torch.optim import Optimizer
-from torch.optim.lr_scheduler import LRScheduler
-from torch.utils.data import DataLoader
 from torch.nn.init import (
     xavier_normal_, xavier_uniform_, kaiming_uniform_, uniform_,
     trunc_normal_, orthogonal_, sparse_, kaiming_normal_, normal_
 )
 from torch.nn.utils import fuse_linear_bn_weights
-
-
-def set_defaults():
-    """
-    A
-    """
-    torch.set_default_device('cpu')
-    torch.set_default_dtype(torch.double)
-    if torch.cuda.is_available():
-        torch.set_default_device('cuda')
-        torch.set_default_dtype(torch.double)
-
+import utility.nn.torchdefault as torchdefault
 
 def gen_linear_layer(layer: int, capacity: list[int]):
     """
     A
     """
-    set_defaults()
+    torchdefault.set_defaults()
     assert capacity[-1] > 0, (
         "La capacidad final debe ser mayor a cero"
     )
@@ -113,11 +99,8 @@ class LinealNN(Module):
     activation: list[tuple[str, Any, dict]]
     activation_layers: ModuleList
     sequential_layers: ModuleList
-    optimizer: Optimizer | None
-    scheduler: LRScheduler | None
     loss_layer: Module
     inference_layer: Module
-    log: dict[str, Any]
     activations: list[Tensor | None]
     masks: list[Tensor]
     weights_initializers: list[tuple[Any, Any, dict] | None]
@@ -133,7 +116,7 @@ class LinealNN(Module):
 
     def __init__(self):
         super().__init__()
-        set_defaults()
+        torchdefault.set_defaults()
         self.seed = None
         self.layers = -1
         self.verbosity = 0
@@ -164,7 +147,7 @@ class LinealNN(Module):
         """
         A
         """
-        set_defaults()
+        torchdefault.set_defaults()
         assert capacity[-1] > 0 and capacity[0] > 0, (
             "La capacidad final e inicial deben ser mayor a cero"
         )
@@ -276,20 +259,6 @@ class LinealNN(Module):
             else kwargs['weights_initializers']
             for k in range(layers)
         ]
-        model.masks = [
-            torch.full(
-                (capacity[k + 1], capacity[k] + 1),
-                1
-            ).bool()
-            if (
-                'masks' not in kwargs
-                or isinstance(kwargs['masks'], dict)
-                and k not in kwargs['masks']
-                or not isinstance(kwargs['masks'], list)
-            )
-            else kwargs['masks'][k]
-            for k in range(layers)
-        ]
         model.l1_weight = [  # type: ignore
             None if (
                 'l1_weight' not in kwargs
@@ -360,13 +329,20 @@ class LinealNN(Module):
             else 0
         )
         model.__initialize_layers(capacity=capacity)
+        model.set_masks(kwargs['masks'] if 'masks' in kwargs else None)
         return model
 
-    def set_masks(self, masks: list[Tensor | None] | dict[int, Tensor | None]):
+    def set_capacity(self, capacity: list[int]):
+        self.__initialize_layers(capacity=capacity)
+
+    def set_masks(
+        self,
+        masks: list[Tensor | None] | dict[int, Tensor | None] | None = None
+    ):
         """
         A
         """
-        set_defaults()
+        torchdefault.set_defaults()
         self.masks = [  # type: ignore
             (
                 torch.ones((
@@ -396,7 +372,7 @@ class LinealNN(Module):
         self.__update_masks()
 
     def __initialize_layers(self, capacity: list[int]):
-        set_defaults()
+        torchdefault.set_defaults()
         layers = len(capacity) - 1
         self.bias_layers = ModuleList([
             ConstantPad1d((0, 1), 1) for _ in range(layers)
@@ -454,7 +430,7 @@ class LinealNN(Module):
         """
         A
         """
-        set_defaults()
+        torchdefault.set_defaults()
         for mask, linear_layer in zip(
             self.masks,
             self.linear_layers
@@ -466,24 +442,8 @@ class LinealNN(Module):
                     )
                 )
 
-    def set_optimizer(self, optimizer: type[Optimizer], *args, **kwargs):
-        """
-        A
-        """
-        set_defaults()
-        self.optimizer = optimizer(self.parameters(), *args, **kwargs)
-        self.scheduler = None
-
-    def set_scheduler(self, scheduler: type[LRScheduler], *args, **kwargs):
-        """
-        A
-        """
-        set_defaults()
-        if self. optimizer is not None:
-            self.scheduler = scheduler(self.optimizer, *args, **kwargs)
-
     def __update_learnable_layers(self):
-        set_defaults()
+        torchdefault.set_defaults()
         for sequential_layer, learnable in zip(
             self.sequential_layers, self.learnable_layers
         ):
@@ -494,73 +454,18 @@ class LinealNN(Module):
         Implementacion necesaria para la implementacion de Module en Pytorch,
         es la evaluación hacia delante
         """
-        set_defaults()
+        torchdefault.set_defaults()
         x = input_tensor
         for k, layer in enumerate(self.sequential_layers):
             x = layer(x)
             self.activations[k] = x
         return x
 
-    def __log_loss(self, label: str, loss: float):
-        print(f'{label:30} loss : {loss:>10g}')
-
-    def __log_start(self):
-        match self.verbosity:
-            case 3:
-                self.__log_loss(
-                    'start       test',
-                    self.log['test loss']
-                )
-            case 2:
-                self.__log_loss(
-                    'start       test',
-                    self.log['test loss']
-                )
-            case 1:
-                self.__log_loss(
-                    'start       test',
-                    self.log['test loss']
-                )
-            case _:
-                pass
-
-    def __log_epoch(self, epoch: int):
-        match self.verbosity:
-            case 3:
-                self.__log_loss(
-                    f'epoch {epoch:>5d} train    raw',
-                    self.log['raw loss']
-                )
-                self.__log_loss(
-                    f'epoch {epoch:>5d} train normalized',
-                    self.log['norm loss']
-                )
-                self.__log_loss(
-                    f'epoch {epoch:>5d} test',
-                    self.log['test loss']
-                )
-            case 2:
-                self.__log_loss(
-                    f'epoch {epoch:>5d} train normalized',
-                    self.log['norm loss']
-                )
-                self.__log_loss(
-                    f'epoch {epoch:>5d} test',
-                    self.log['test loss']
-                )
-            case 1:
-                self.__log_loss(
-                    f'epoch {epoch:>5d} test',
-                    self.log['test loss']
-                )
-            case _:
-                pass
-
     def l2_weight_regularization(self):
         """
         A
         """
-        set_defaults()
+        torchdefault.set_defaults()
         l2_layers = [
             (
                 norm_weight *
@@ -573,13 +478,13 @@ class LinealNN(Module):
         ]
         if len(l2_layers) > 0:
             return torch.concat(l2_layers).mean()
-        return torch.tensor(0)
+        return torchdefault.tensor(0)
 
     def l1_activation_regularization(self):
         """
         A
         """
-        set_defaults()
+        torchdefault.set_defaults()
         l1_layers = [
             (
                 norm_weight
@@ -592,13 +497,13 @@ class LinealNN(Module):
         ]
         if len(l1_layers) > 0:
             return torch.concat(l1_layers).mean()
-        return torch.tensor(0)
+        return torchdefault.tensor(0)
 
     def l2_activation_regularization(self):
         """
         A
         """
-        set_defaults()
+        torchdefault.set_defaults()
         l2_layers = [
             (
                 norm_weight
@@ -611,13 +516,13 @@ class LinealNN(Module):
         ]
         if len(l2_layers) > 0:
             return torch.concat(l2_layers).mean()
-        return torch.tensor(0)
+        return torchdefault.tensor(0)
 
     def l1_weight_regularization(self):
         """
         A
         """
-        set_defaults()
+        torchdefault.set_defaults()
         l1_layers = [
             (
                 norm_weight
@@ -630,186 +535,107 @@ class LinealNN(Module):
         ]
         if len(l1_layers) > 0:
             return torch.concat(l1_layers).mean()
-        return torch.tensor(0)
+        return torchdefault.tensor(0)
 
-    def train_batch(
-        self, batch_features: Tensor,
-        batch_targets: Tensor
-    ):
-        """
-        A
-        """
-        set_defaults()
-
-        def closure():
-            with ThreadPoolExecutor(max_workers=10) as executor:
-                self.train()
-                weights_copy = []
-                for linear_layer, connect_dropout, mask in (
-                    (linear_layer, connect_dropout, mask)
-                    for linear_layer, connect_dropout, mask in zip(
-                        self.linear_layers,
-                        self.connection_dropout,
-                        self.masks
-                    ) if connect_dropout is not None
-                ):
-                    weight = linear_layer.weight
-                    connection_mask = torch.full_like(
-                        weight,  # type: ignore
-                        connect_dropout
-                    ).bernoulli().bool()
-                    weight_mask = mask.bitwise_and(connection_mask)
-                    linear_layer.weight = (
-                        weight.clone() * weight_mask.type_as(  # type: ignore
-                            weight  # type: ignore
-                        )
-                    )
-                    weights_copy += [weight]
-                if self.optimizer is not None:
-                    self.optimizer.zero_grad()
-                loss = self.loss_layer(self(batch_features), batch_targets)
-                l1a_future = executor.submit(
-                    self.l1_activation_regularization
+    def train_closure(self, features: Tensor, targets: Tensor):
+        torchdefault.set_defaults()
+        results = {}
+        self.train()
+        weights_copy = []
+        for linear_layer, connect_dropout, mask in (
+            (linear_layer, connect_dropout, mask)
+            for linear_layer, connect_dropout, mask in zip(
+                self.linear_layers,
+                self.connection_dropout,
+                self.masks
+            ) if connect_dropout is not None
+        ):
+            weight = linear_layer.weight
+            connection_mask = torch.full_like(
+                weight,  # type: ignore
+                connect_dropout,
+                dtype=torch.get_default_dtype(),
+                device=torch.get_default_device()
+            ).bernoulli().bool()
+            weight_mask = mask.bitwise_and(connection_mask)
+            linear_layer.weight = (
+                weight.clone() * weight_mask.type_as(  # type: ignore
+                    weight  # type: ignore
                 )
-                l2a_future = executor.submit(
-                    self.l2_activation_regularization
-                )
-                l1w_future = executor.submit(
-                    self.l1_weight_regularization
-                )
-                l2w_future = executor.submit(
-                    self.l2_weight_regularization
-                )
-                self.log['batch raw loss'] = loss.cpu().detach().item()
-                loss += (
-                    l1w_future.result() + l2w_future.result() +
-                    l1a_future.result() + l2a_future.result()
-                )
-                self.log['batch norm loss'] = loss.cpu().detach().item()
-                loss.backward()
-                for weight, (linear_layer, connect_dropout, mask) in zip(
-                    weights_copy,
-                    (
-                        (linear_layer, connect_dropout, mask)
-                        for linear_layer, connect_dropout, mask in zip(
-                            self.linear_layers,
-                            self.connection_dropout,
-                            self.masks
-                        ) if connect_dropout is not None
-                    )
-                ):
-                    linear_layer.weight = weight  # type: ignore
-                for linear_layer, mask in zip(
-                    self.linear_layers, self.masks
-                ):
-                    linear_layer.weight.grad.copy_(  # type: ignore
-                        linear_layer.weight.grad
-                        * mask.type_as(  # type: ignore
-                            linear_layer.weight.grad  # type: ignore
-                        )
-                    )
-                self.eval()
-                return loss.cpu().detach().item()
+            )
+            weights_copy += [weight]
         if self.optimizer is not None:
-            return self.optimizer.step(closure=closure)
-        return closure()
-
-    def train_epoch(self, dataloader: DataLoader):
-        """
-        A
-        """
-        set_defaults()
-        batch_loss = []
-        self.log['norm loss'] = []
-        self.log['raw loss'] = []
-        for features, targets in dataloader:
-            batch_loss += [self.train_batch(features, targets)]
-            self.log['norm loss'] += [self.log['batch norm loss']]
-            self.log['raw loss'] += [self.log['batch raw loss']]
-        if self.scheduler is not None:
-            self.scheduler.step()
-        self.log['raw loss'] = numpy.mean(self.log['raw loss']).item()
-        self.log['norm loss'] = numpy.mean(self.log['norm loss']).item()
-        return numpy.mean(batch_loss).item()
-
-    def test_epoch(self, dataloader: DataLoader):
-        """
-        A
-        """
-        set_defaults()
-        with torch.inference_mode():
-            loss = numpy.mean([
-                self.loss_layer(self(X), y).cpu().detach().item()
-                for X, y in dataloader
-            ]).item()
-            self.log['test loss'] = loss
-        return loss
-
-    def train_loop(
-        self,
-        epochs: int,
-        train_dataloader: DataLoader,
-        test_dataloader: DataLoader | None = None,
-        seed: int | None = None
-    ):
-        """
-        A
-        """
-        set_defaults()
-        if seed is None:
-            seed = torch.seed()
-        else:
-            torch.manual_seed(seed)
-        self.seed = seed
-        if test_dataloader is None:
-            test_dataloader = train_dataloader
-        train_loss, test_loss = [], []
-        start_loss = self.test_epoch(test_dataloader)
-        self.__log_start()
-        fitted_state = {'state_dict': {}, 'loss': None, 'epoch': None}
-        overfit_counter = self.overfit_tolerance
-        for epoch in range(epochs):
-            train_loss += [self.train_epoch(train_dataloader)]
-            loss = self.test_epoch(test_dataloader)
-            test_loss += [loss]
-            self.__log_epoch(epoch)
-            if self.overfit_tolerance is not None:
-                overfit_counter -= 1  # type: ignore
-                if fitted_state['loss'] is None or loss < fitted_state['loss']:
-                    overfit_counter = self.overfit_tolerance
-                    fitted_state['epoch'] = epoch
-                    fitted_state['loss'] = loss
-                    fitted_state['state_dict'] = deepcopy(self.state_dict())
-                if overfit_counter < 0:
-                    break
-        return train_loss, test_loss, start_loss, fitted_state
+            self.optimizer.zero_grad()
+        loss = self.loss_layer(self(features), targets)
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            l1a_future = executor.submit(
+                self.l1_activation_regularization
+            )
+            l2a_future = executor.submit(
+                self.l2_activation_regularization
+            )
+            l1w_future = executor.submit(
+                self.l1_weight_regularization
+            )
+            l2w_future = executor.submit(
+                self.l2_weight_regularization
+            )
+            results['raw_loss'] = loss.cpu().detach().item()
+            loss += (
+                l1w_future.result() + l2w_future.result() +
+                l1a_future.result() + l2a_future.result()
+            )
+            results['norm_loss'] = loss.cpu().detach().item()
+        loss.backward()
+        for weight, (linear_layer, connect_dropout, mask) in zip(
+            weights_copy,
+            (
+                (linear_layer, connect_dropout, mask)
+                for linear_layer, connect_dropout, mask in zip(
+                    self.linear_layers,
+                    self.connection_dropout,
+                    self.masks
+                ) if connect_dropout is not None
+            )
+        ):
+            linear_layer.weight = weight  # type: ignore
+        for linear_layer, mask in zip(
+            self.linear_layers, self.masks
+        ):
+            linear_layer.weight.grad.copy_(  # type: ignore
+                linear_layer.weight.grad
+                * mask.type_as(  # type: ignore
+                    linear_layer.weight.grad  # type: ignore
+                )
+            )
+        self.eval()
+        return results
 
     def inference(self, x: Tensor):
         """
         Ciclo principal para obtener solamente la inferencia de la red neuronal
         sobre un conjunto de datos
         """
-        set_defaults()
+        torchdefault.set_defaults()
         with torch.inference_mode():
             return self.inference_layer(
                 self(x)
             ).cpu().detach().numpy()
 
-    def test_loop(self, dataloader: DataLoader):
-        """
-        Ciclo principal para calcular unicamente la perdida
-        de los datos de prueba
-        """
-        set_defaults()
+    def loss(self, features: Tensor, target: Tensor):
+        torchdefault.set_defaults()
         with torch.inference_mode():
-            return self.test_epoch(dataloader)
+            return self.loss_layer(
+                self(features),
+                target
+            ).cpu().detach().numpy()
 
     def get_weights(self):
         """
         Metodo que devuelve una lista de arreglos multidimesionales que
         contiene los pesos de las capas lineales en una red neuronal
         """
-        set_defaults()
+        torchdefault.set_defaults()
         with torch.inference_mode():
             weights = []
             for k, linear in enumerate(self.linear_layers):
@@ -837,7 +663,7 @@ class LinealNN(Module):
         Metodo que devuelve una lista de arreglos multidimesionales
         que contiene los pesos de las capas lineales en una red neuronal
         """
-        set_defaults()
+        torchdefault.set_defaults()
         for k in range(self.layers):
             if isinstance(self.linear_layers[k], Linear):
                 if self.batch_norm[k]:
@@ -845,12 +671,13 @@ class LinealNN(Module):
                         self.capacity[k] + 1
                     )
                 self.linear_layers[k].weight = Parameter(  # type: ignore
-                    torch.tensor(weights[k], requires_grad=True)
+                    torchdefault.tensor(weights[k], requires_grad=True)
                     * self.masks[k].to(
                         device=torch.get_default_device(),
                         dtype=torch.get_default_dtype()
                     )
                 )
+        self.__update_masks()
 
     def get_total_parameters(self):
         """
@@ -865,9 +692,7 @@ class LinealNN(Module):
         """
         A
         """
-        set_defaults()
-        arch_copy = LinealNN()
-        arch_copy.load_state_dict(deepcopy(self.state_dict()), assign=True)
+        arch_copy = self.copy()
         arch_copy.set_masks(masks)  # type: ignore
         return arch_copy
 
@@ -875,7 +700,7 @@ class LinealNN(Module):
         """
         A
         """
-        set_defaults()
+        torchdefault.set_defaults()
         self.learnable_layers = learnable
         self.__update_learnable_layers()
 
@@ -883,7 +708,7 @@ class LinealNN(Module):
         """
         A
         """
-        set_defaults()
+        torchdefault.set_defaults()
         self.learnable_layers[layer] = True
         self.__update_learnable_layers()
 
@@ -891,9 +716,12 @@ class LinealNN(Module):
         """
         A
         """
-        set_defaults()
+        torchdefault.set_defaults()
         self.learnable_layers[layer] = False
         self.__update_learnable_layers()
+
+    def copy(self):
+        return deepcopy(self)
 
 
 class InferenceModule(Module):
@@ -910,7 +738,7 @@ class InferenceModule(Module):
         """
         A
         """
-        set_defaults()
+        torchdefault.set_defaults()
         return self.inference_function(input_tensor)
 
 
@@ -931,5 +759,5 @@ class LossModule(Module):
         """
         A
         """
-        set_defaults()
+        torchdefault.set_defaults()
         return self.loss_function(input_a, input_b)

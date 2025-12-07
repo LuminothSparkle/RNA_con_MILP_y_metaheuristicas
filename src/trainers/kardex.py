@@ -5,87 +5,75 @@ académico
 """
 import argparse
 from argparse import ArgumentParser
-from copy import deepcopy
 from pathlib import Path
+from time import sleep
 from concurrent.futures import ThreadPoolExecutor
-import torch
-from src.trainers.datasets import KardexDataset, test_arch
-from src.utility.io.nnjson import read_arch_json, read_cv_json, gen_from_tuple
-from src.crossvalidation.files import generate_cv_files
-from src.utility.io.crossval import save_crossvalidation
+from trainers.datasets import kardex_dataset
+from utility.nn.crossvalidation import CrossvalidationNN
+from utility.io.nnjson import gen_from_tuple, crossvalidator_json, dataset_json, trainer_json, arch_json
+from utility.io.crossvalidation import save_crossvalidation, load_crossvalidation
+from utility.nn.lineal import LinealNN
+from utility.signal import InterruptHandler
 
 
-def process_career(
-    career_path: Path, save_path: Path,
-    arch_data: dict, cv_data: dict, gen_data: bool = False,
-    exists_ok: bool = True
-):
-    """
-    A
-    """
-    cv_data = deepcopy(cv_data)
-    torch.set_default_device('cpu')
-    torch.set_default_dtype(torch.double)
-    if torch.cuda.is_available():
-        torch.set_default_device('cuda')
-        torch.set_default_dtype(torch.double)
-    print(f'Processing {career_path.stem}')
-    cv_data['crossvalidator'] = gen_from_tuple(cv_data['crossvalidator'])
-    dataset = KardexDataset(career_path, **cv_data)
-    arch_data['inference_layer'] = dataset.inference_function
-    arch_data['loss_layer'] = dataset.loss_fn
-    arch_data['capacity'] = [
-        dataset.features_size,
-        *arch_data['capacity'],
-        dataset.targets_size
-    ]
-    if 'threads' in cv_data:
-        arch_data['threads'] = cv_data['threads']
-    data = test_arch(
-        dataset=dataset,
-        iterations=cv_data['iterations'],
-        train_batches=cv_data['train_batches'],
-        **arch_data
-    )
-    name = career_path.stem
-    results_path = save_path / name / 'results'
-    results_path.mkdir(parents=True, exist_ok=True)
-    save_crossvalidation(
-        file_path=results_path / 'crossvalidation.pt',
-        exists_ok=exists_ok,
-        **data
-    )
-    if gen_data:
-        generate_cv_files(
-            dir_path=results_path,
-            name='kardex',
-            exists_ok=exists_ok,
-            **data
+def load_crossvalidator(load_path: Path, career_name: str, generate: bool = False):
+    if generate:
+        dataset_kwargs = dataset_json(load_path / 'dataset.json')
+        crossvalidator_kwargs = crossvalidator_json(load_path / 'crossvalidation.json')
+        crossvalidator_kwargs['crossvalidator'] = gen_from_tuple(crossvalidator_kwargs['crossvalidator'])
+        arch_kwargs = arch_json(load_path / 'architecture.json')
+        trainer_kwargs = trainer_json(load_path / 'trainer.json')
+        dataset = kardex_dataset(file_path=load_path / career_name, **dataset_kwargs)
+        arch_kwargs['capacity'] = [
+            sum(dataset.get_tensor_sizes('features')),
+            *arch_kwargs['capacity'],
+            sum(dataset.get_tensor_sizes('targets'))
+        ]
+        arch_kwargs['inference_layer'] = dataset.inference_function
+        arch_kwargs['loss_layer'] = dataset.loss_fn
+        crossvalidator = CrossvalidationNN.from_dataset(
+            dataset=dataset,
+            base_model=LinealNN.from_capacity(**arch_kwargs),
+            optimizer=trainer_kwargs['optimizer'][0],
+            optimizer_kwargs=trainer_kwargs['optimizer'][2],
+            scheculer=trainer_kwargs['scheduler'][0],
+            scheduler_kwargs=trainer_kwargs['scheduler'][2],
+            **crossvalidator_kwargs
         )
-
+    else:
+        crossvalidator = load_crossvalidation(load_path)
+    return crossvalidator
 
 def main(args: argparse.Namespace):
     """
     Funcion main para generar la base de datos en archivo csv del archivo
     json del kardex anonimizado
     """
-    cv_data = read_cv_json(args.cv_path)
-    arch_data = read_arch_json(args.arch_path)
-    file_list = list(args.load_path.glob('*.csv'))
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    career_paths = list(args.load_path.glob('*.csv'))
+    crossvalidators = []
+    for career_path in career_paths:
+        career_name = career_path.name
+        crossvalidators += [load_crossvalidator(args.load_path, career_name, not args.load)]
+    with ThreadPoolExecutor(max_workers=1) as executor:
         futures_list = []
-        for career_path in file_list:
-            futures_list += [executor.submit(
-                process_career,
-                career_path,
-                args.save_path,
-                deepcopy(arch_data),
-                deepcopy(cv_data),
-                args.gen_data,
-                not args.no_overwrite
-            )]
-        for future_data in futures_list:
-            future_data.result()
+        for crossvalidator in crossvalidators:
+            futures_list += [
+                executor.submit(crossvalidator.crossvalidate)
+            ]
+        with InterruptHandler() as handler:
+            while not all(future.done() for future in futures_list):
+                sleep(1)
+                for crossvalidator in crossvalidators:
+                    crossvalidator.interrupted = handler.interrupted
+            if handler.interrupted:
+                print("Interrupted")
+        if all(future.result() for future in futures_list):
+            print("Terminó")
+        else:
+            print("No terminó")
+    for crossvalidator, career_path in zip(crossvalidators, career_paths):
+        career_name = career_path.stem
+        save_crossvalidation(crossvalidator, args.save_path / career_name)
 
 
 if __name__ == '__main__':
@@ -101,22 +89,5 @@ if __name__ == '__main__':
         type=Path,
         default=Path.cwd() / 'Data' / 'kardex'
     )
-    argparser.add_argument(
-        '--arch_path', '-ap',
-        type=Path,
-        default=Path.cwd() /
-        'Data' / 'kardex' /
-        'crossvalidation' /
-        'arch.json'
-    )
-    argparser.add_argument(
-        '--cv_path', '-cp',
-        type=Path,
-        default=Path.cwd() /
-        'Data' / 'kardex' /
-        'crossvalidation' /
-        'cv.json'
-    )
-    argparser.add_argument('--no_overwrite', '-no', action='store_true')
-    argparser.add_argument('--gen_data', '-gd', action='store_true')
+    argparser.add_argument('--load', '-l', action='store_true')
     sys.exit(main(argparser.parse_args(sys.argv[1:])))

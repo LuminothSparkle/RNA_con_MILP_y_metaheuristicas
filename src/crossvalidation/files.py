@@ -7,25 +7,23 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from matplotlib import pyplot
 import numpy
-from torch.utils.data import Subset
-from src.utility.nn.stats import (
+from utility.nn.stats import (
     stats_dataframe, mean_stats_dataframes,
     generate_percetages
 )
-from src.utility.io.figures import (
+from utility.io.figures import (
     extract_boxplot_data,
     save_boxplot_figures,
     save_confusion_matrix_figure,
     save_prediction_error_figure
 )
-from src.utility.io.crossval import (
+from utility.io.crossvalidation import (
     save_log, save_model_dataframe, save_metrics_dataframe,
     load_crossvalidation
 )
-from src.utility.io.dataset import save_dataset_csv, save_pytorch_dataset
-from src.utility.io.model import save_model
-from src.utility.nn.lineal import LinealNN
-from src.utility.nn.cvtensords import CrossvalidationTensorDataset
+from utility.io.model import save_model
+from utility.nn.lineal import LinealNN
+from utility.nn.dataset import CrossvalidationDataset
 
 
 def safe_suffix(name: str, suffix: str):
@@ -40,9 +38,7 @@ def safe_suffix(name: str, suffix: str):
 def generate_cv_files(
     dir_path: Path,
     models: list[LinealNN],
-    dataset_generators: list,
-    models_test_indices: list[list[int]],
-    models_train_indices: list[list[int]],
+    dataset: CrossvalidationDataset,
     models_loss: list,
     models_train_time: list,
     models_parameters: list,
@@ -59,17 +55,11 @@ def generate_cv_files(
     model_predictions = []
     datasets = []
     stats_data = []
-    for model, generator, test_indices in zip(
-        models, dataset_generators, models_test_indices
-    ):
-        dataset = CrossvalidationTensorDataset.from_generator_dict(generator)
-        datasets += [dataset]
-        predictions = dataset.prediction(model, test_indices)
-        model_predictions += [predictions]
+    for model in models:
         stats_data += [generate_percetages(
-            stats_dataframe(model, dataset, test_indices)
+            stats_dataframe(model, dataset)
         )]
-        mean_stats = mean_stats_dataframes(stats_data)
+    mean_stats = mean_stats_dataframes(stats_data)
     boxplot_data = extract_boxplot_data(stats_data)
     with ThreadPoolExecutor(max_workers=10) as executor:
         futures_list = []
@@ -98,27 +88,12 @@ def generate_cv_files(
         stats_path.mkdir(parents=True, exist_ok=True)
         dataset_path.mkdir(parents=True, exist_ok=True)
         models_path.mkdir(parents=True, exist_ok=True)
-        for i, model, dataset, train_indices, test_indices, stats in zip(
+        for i, model, stats in zip(
             [*range(len(datasets)), 'best', 'worst'],
-            [
-                *datasets,
-                datasets[0],
-                datasets[-1]
-            ],
             [
                 *models,
                 models[0],
                 models[-1]
-            ],
-            [
-                *models_train_indices,
-                models_train_indices[0],
-                models_train_indices[-1]
-            ],
-            [
-                *models_test_indices,
-                models_test_indices[0],
-                models_test_indices[-1]
             ],
             [
                 *stats_data,
@@ -144,22 +119,6 @@ def generate_cv_files(
                 exists_ok=exists_ok
             )]
             futures_list += [executor.submit(
-                save_pytorch_dataset,
-                dataset=Subset(dataset, train_indices),
-                file_path=train_dataset_path / (
-                    f'{safe_suffix(name, f"{i}")}.pt'
-                ),
-                exists_ok=exists_ok
-            )]
-            futures_list += [executor.submit(
-                save_pytorch_dataset,
-                dataset=Subset(dataset, test_indices),
-                file_path=test_dataset_path / (
-                    f'{safe_suffix(name, f"{i}")}.pt'
-                ),
-                exists_ok=exists_ok
-            )]
-            futures_list += [executor.submit(
                 save_metrics_dataframe,
                 metrics_data=stats,
                 file_path=stats_path / (
@@ -167,34 +126,6 @@ def generate_cv_files(
                 ),
                 exists_ok=exists_ok
             )]
-            for label_type, suffix in [
-                ('all', 'raw'),
-                ('class targets', 'cls_tgt'),
-                ('regression targets', 'reg_tgt'),
-                ('features', 'ftr')
-            ]:
-                futures_list += [executor.submit(
-                    save_dataset_csv,
-                    dataset=dataset,
-                    file_path=train_path / (
-                        f'{safe_suffix(name, suffix)}.csv'
-                    ),
-                    subset=train_indices,
-                    label_type=label_type,
-                    raw=True,
-                    exists_ok=exists_ok
-                )]
-                futures_list += [executor.submit(
-                    save_dataset_csv,
-                    dataset=dataset,
-                    file_path=test_path / (
-                        f'{safe_suffix(name, suffix)}.csv'
-                    ),
-                    subset=test_indices,
-                    label_type=label_type,
-                    raw=True,
-                    exists_ok=exists_ok
-                )]
         for name_type, i in [('best', 0), ('worst', -1)]:
             save_displays(
                 model_predictions=model_predictions[i],

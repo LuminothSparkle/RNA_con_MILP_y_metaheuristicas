@@ -5,20 +5,19 @@ import numpy
 import numpy.random as numpyrand
 from numpy import ndarray
 from numpy.random import PCG64, SeedSequence, Generator
-from torch.utils.data import Subset
-from src.utility.metaheuristics.fitness import WeightFitnessCalculator
-from src.utility.metaheuristics.nnnbhd import get_neighbors
+from utility.nn.dataset import CsvDataset
+from utility.nn.trainer import TrainerNN
+from utility.metaheuristics.fitness import WeightFitnessCalculator
+from utility.metaheuristics.nnnbhd import get_neighbors
 
 
 def simulated_annealing(
+    trainer: TrainerNN,
+    dataset: CsvDataset,
     t_i: float,
     iterations: int, t_decay: float,
     weights: list[ndarray | None],
-    train_dataset: Subset,
-    test_dataset: Subset,
     p: float = 0.5,
-    epochs: int = 1,
-    batch_size: int = 1,
     seed: int | Generator | None = None
 ):
     """
@@ -31,12 +30,10 @@ def simulated_annealing(
         if isinstance(seed, int):
             seeder = SeedSequence(seed)
         generator = numpyrand.default_rng(PCG64(seeder))
-    fittner = WeightFitnessCalculator()
-    fittner.set_params(
-        train_dataset,
-        test_dataset,
-        epochs,
-        batch_size
+    fittner = WeightFitnessCalculator(
+        arch=trainer.model,
+        trainer=trainer,
+        dataset=dataset
     )
     best_fitness, best_weights = fittner.evaluate(weights)
     weights, prev_fitness = best_weights, best_fitness
@@ -44,7 +41,7 @@ def simulated_annealing(
     for _ in range(iterations):
         neighbors = get_neighbors(best_weights, p, generator)
         neighbor = generator.choice(neighbors)
-        fitness, neighbor = fittner.evaluate(neighbor, seed=generator)
+        fitness, neighbor = fittner.evaluate(neighbor)
         if fitness > best_fitness:
             best_fitness, best_weights = fitness, neighbor
         if bool(generator.binomial(

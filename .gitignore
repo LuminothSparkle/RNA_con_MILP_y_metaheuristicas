@@ -7,3 +7,7 @@
 *.pyc
 *.pdf
 */__pycache__
+*.csv
+*.pt
+*.log
+*.sol

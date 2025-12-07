@@ -1,0 +1,15 @@
+{
+    "seed" : 42,
+    "iterations" : 5,
+    "train_batches" : 100,
+    "crossvalidator" : {
+        "tuple" : [
+            "RepeatedStratifiedKFold", [],
+            {
+                "n_splits" : 5,
+                "n_repeats" : 5,
+                "random_state" : 42
+            }
+        ]
+    }
+}

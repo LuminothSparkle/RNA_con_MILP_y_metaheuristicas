@@ -19,6 +19,7 @@ from sklearn.model_selection import (
 )
 
 
+
 nn_type_dict = {
     'RepeatedStratifiedKFold': RepeatedStratifiedKFold,
     'RepeatedKFold': RepeatedKFold,
@@ -26,12 +27,14 @@ nn_type_dict = {
     'StratifiedGroupKFold': StratifiedGroupKFold,
     'StratifiedKFold': StratifiedKFold,
     'GroupKFold': GroupKFold,
+
     'LinearLR': LinearLR,
     'SequentialLR': SequentialLR,
     'StepLR': StepLR,
     'CyclicLR': CyclicLR,
     'OneCycleLR': OneCycleLR,
     'ConstantLR': ConstantLR,
+
     'Adadelta': Adadelta,
     'Adafactor': Adafactor,
     'Adagrad': Adagrad,
@@ -41,6 +44,7 @@ nn_type_dict = {
     'ASGD': ASGD,
     'SGD': SGD,
     'SparseAdam': SparseAdam,
+
     'calculate_gain': calculate_gain
 }
 
@@ -54,22 +58,19 @@ def gen_from_tuple(
     return value[0](*value[1], **value[2])
 
 
-def analize_value_param(
+def analize_json(
     value: Any,
     type_dict: dict[str, Any] | None = None
-) -> tuple | Any:
-    """
-    A
-    """
+):
     if type_dict is None:
         type_dict = {}
-    if isinstance(value, dict) and 'tuple' in value:
-        return tuple(analize_value_param(value['tuple'], type_dict))
-    elif isinstance(value, list):
-        return [analize_value_param(value, type_dict) for value in value]
+    if isinstance(value, list):
+        return [analize_json(value, type_dict) for value in value]
+    elif isinstance(value, tuple):
+        return tuple(analize_json(value, type_dict) for value in value)
     elif isinstance(value, dict):
         return {
-            name: analize_value_param(value, type_dict)
+            name: analize_json(value, type_dict)
             for name, value in value.items()
         }
     elif isinstance(value, str) and value in type_dict:
@@ -89,46 +90,59 @@ def analize_layers_param(
         type_dict = {}
     if isinstance(value, list):
         return {
-            k: analize_value_param(value, type_dict)
+            k: analize_json(value, type_dict)
             for k, value in enumerate(value)
         }
-    elif isinstance(value, dict) and 'tuple' not in value:
+    elif isinstance(value, dict):
         return {
-            int(k): analize_value_param(value, type_dict)
+            int(k): analize_json(value, type_dict)
             for k, value in value.items()
         }
     else:
-        return {k: analize_value_param(value) for k in range(layers)}
+        return {k: analize_json(value) for k in range(layers)}
 
+def tuple_encoder(object_dict: dict):
+    if len(object_dict) == 1 and 'tuple' in object_dict:
+        return tuple(object_dict['tuple'])
+    return object_dict
 
-def read_arch_json(file_path: Path) -> dict:
-    """
-    A
-    """
-    arch = {}
-    with file_path.open('rt', encoding='utf-8') as fp:
-        raw = json.load(fp)
-        arch['layers'] = len(raw['capacity']) + 1
-        for param, values in raw.items():
-            if param == 'layers params':
-                for param, values in values.items():
-                    arch[param] = analize_layers_param(
-                        values,
-                        arch['layers'],
-                        nn_type_dict
-                    )
-            else:
-                arch[param] = analize_value_param(values, nn_type_dict)
-    return arch
+def dataset_json(file_path: Path):
+    with file_path.open('r', encoding='utf-8') as fp:
+        json_dict = json.load(fp=fp, object_hook=tuple_encoder)
+    result_dict = {}
+    for key, value in json_dict.items():
+        result_dict[key] = analize_json(value=value, type_dict=nn_type_dict)
+    return result_dict
 
+def trainer_json(file_path: Path):
+    with file_path.open('r', encoding='utf-8') as fp:
+        json_dict = json.load(fp=fp, object_hook=tuple_encoder)
+    result_dict = {}
+    for key, value in json_dict.items():
+        result_dict[key] = analize_json(value=value, type_dict=nn_type_dict)
+    return result_dict
 
-def read_cv_json(file_path: Path) -> dict:
-    """
-    A
-    """
-    cv = {}
-    with file_path.open('rt', encoding='utf-8') as fp:
-        raw = json.load(fp)
-        for param, values in raw.items():
-            cv[param] = analize_value_param(values, nn_type_dict)
-    return cv
+def crossvalidator_json(file_path: Path):
+    with file_path.open('r', encoding='utf-8') as fp:
+        json_dict = json.load(fp=fp, object_hook=tuple_encoder)
+    result_dict = {}
+    for key, value in json_dict.items():
+        result_dict[key] = analize_json(value=value, type_dict=nn_type_dict)
+    return result_dict
+
+def arch_json(file_path: Path):
+    with file_path.open('r', encoding='utf-8') as fp:
+        json_dict = json.load(fp=fp, object_hook=tuple_encoder)
+    result_dict = {}
+    for key, value in json_dict.items():
+        if key == 'layers_params':
+            layers = len(json_dict['capacity']) + 1
+            for param, layer_values in json_dict['layers_params'].items():
+                result_dict[param] = analize_layers_param(
+                    value=layer_values,
+                    layers=layers,
+                    type_dict=nn_type_dict
+                )
+        else:
+            result_dict[key] = analize_json(value=value, type_dict=nn_type_dict)
+    return result_dict

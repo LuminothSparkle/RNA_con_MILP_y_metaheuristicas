@@ -15,81 +15,58 @@ display_percentage_metrics_labels = [
 ]
 
 
-def extract_boxplot_data(dataframes: list[DataFrame]):
-    """
-    A
-    """
-    data = numpy.stack(
-        [
-            numpy.atleast_3d(dataframe.to_numpy())
-            for dataframe in dataframes
-        ],
-        axis=2
-    )
-    return {
-        label: {
-            metric: data[i, j, :].squeeze()
-            for j, metric in enumerate(dataframes[0].columns)
-        }
-        for i, label in enumerate(dataframes[0].index)
-    }
-
-
 def save_boxplot_figures(
     dir_path: Path, extensions: list[str],
-    boxplot_data: dict[str, dict[str, ndarray]],
-    backend: str,
-    exists_ok: bool = True
+    boxplot_data: dict[str, DataFrame],
+    backend: str
 ):
     """
     A
     """
-    for target_label, data in boxplot_data.items():
+    dir_path.mkdir(parents=True, exist_ok=True)
+    for target_label, dataframe in boxplot_data.items():
         target_path = dir_path / target_label
+        target_path.mkdir(parents=True, exist_ok=True)
         percentage_data = {
-            metric: arr
-            for metric, arr in data.items()
+            metric: dataframe.loc[:, metric].to_numpy().reshape(-1,1)
+            for metric in dataframe.columns
             if metric in display_percentage_metrics_labels
         }
         values_data = {
-            metric: arr
-            for metric, arr in data.items()
+            metric: dataframe.loc[:, metric].to_numpy().reshape(-1,1)
+            for metric in dataframe.columns
             if metric not in display_percentage_metrics_labels
         }
         for extension in extensions:
-            save_boxplot_figure(
-                target_path / f'percentages.{extension}',
-                target_label=target_label,
-                backend=backend,
-                values=percentage_data,
-                exists_ok=exists_ok
-            )
-            save_boxplots_figure(
-                file_path=target_path / f'values.{extension}',
-                target_label=target_label,
-                backend=backend,
-                values=values_data,
-                exists_ok=exists_ok
-            )
+            if len(percentage_data) > 0:
+                save_boxplot_figure(
+                    target_path / f'percentages.{extension}',
+                    target_label=target_label,
+                    backend=backend,
+                    values=percentage_data
+                )
+            if len(values_data) > 0:
+                save_boxplots_figure(
+                    file_path=target_path / f'values.{extension}',
+                    target_label=target_label,
+                    backend=backend,
+                    values=values_data
+                )
 
 
 def save_boxplots_figure(
     file_path: Path, target_label: str,
     values: dict[str, ndarray],
-    backend: str,
-    exists_ok: bool = True
+    backend: str
 ):
     """
     A
     """
-    assert exists_ok or not file_path.exists(), (
-        f"El archivo {file_path} ya existe"
-    )
     pyplot.switch_backend(backend)
     fig, *axes = pyplot.subplots(1, len(values), layout='constrained')
     for ax, (label, arr) in zip(axes, values.items()):
         ax.boxplot(
-            numpy.atleast_2d(arr).T,
+            arr,
             tick_labels=[label.capitalize()]  # type: ignore
         )
         ax.set(
@@ -105,23 +82,16 @@ def save_boxplots_figure(
 def save_boxplot_figure(
     file_path: Path, target_label: str,
     values: dict[str, ndarray],
-    backend: str,
-    exists_ok: bool = True
+    backend: str
 ):
     """
     A
     """
-    assert exists_ok or not file_path.exists(), (
-        f"El archivo {file_path} ya existe"
-    )
     pyplot.switch_backend(backend)
     fig, ax = pyplot.subplots(layout='constrained')
     ax.boxplot(
         numpy.concat(
-            [
-                numpy.atleast_2d(data).T
-                for data in values.values()
-            ],
+            [*values.values()],
             axis=1
         ),
         tick_labels=[
@@ -143,14 +113,10 @@ def save_confusion_matrix_figure(
     file_path: Path, target_label: str, classes: list[str],
     targets: ndarray, predictions: ndarray,
     fmt: str | None = None, normalize: str | None = None,
-    exists_ok: bool = True
 ):
     """
     A
     """
-    assert exists_ok or not file_path.exists(), (
-        f"El archivo {file_path} ya existe"
-    )
     cm_disp = ConfusionMatrixDisplay.from_predictions(
         y_true=targets, y_pred=predictions,
         labels=classes,
@@ -177,14 +143,10 @@ def save_confusion_matrix_figure(
 def save_prediction_error_figure(
     file_path: Path, target_label: str,
     targets: ndarray, predictions: ndarray,
-    exists_ok: bool = True
 ):
     """
     A
     """
-    assert exists_ok or not file_path.exists(), (
-        f"El archivo {file_path} ya existe"
-    )
     pe_disp = PredictionErrorDisplay.from_predictions(
         y_true=targets, y_pred=predictions, kind='actual_vs_predicted'
     )

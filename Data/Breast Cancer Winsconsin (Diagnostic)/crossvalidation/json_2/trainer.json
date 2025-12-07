@@ -1,0 +1,26 @@
+{
+    "epochs" : 10,
+    "overfit_tolerance" : 3,
+    "optimizer" : {
+        "tuple" : [
+            "Adam", [],
+            {
+                "fused" : true,
+                "lr" : 0.001
+            }
+        ]
+    },
+    "scheduler" : {
+        "tuple" : [
+            "CyclicLR", [],
+            {
+                "base_lr" : 0.001,
+                "max_lr" : 0.01,
+                "step_size_up" : 1,
+                "step_size_down" : 10,
+                "mode" : "exp_range",
+                "gamma" : 0.9
+            }
+        ]
+    }
+}

@@ -1,0 +1,44 @@
+{
+    "verbose" : "v",
+    "capacity" : [2],
+    "seed" : 42,
+    "epochs" : 10000,
+    "overfit_tolerance" : 100,
+    "optimizer" : {
+        "tuple" : [
+            "Adam", [],
+            {
+                "fused" : true,
+                "lr" : 0.001
+            }
+        ]
+    },
+    "scheduler" : {
+        "tuple" : [
+            "CyclicLR", [],
+            {
+                "base_lr" : 0.001,
+                "max_lr" : 0.01,
+                "step_size_up" : 1,
+                "step_size_down" : 10,
+                "mode" : "exp_range",
+                "gamma" : 0.9
+            }
+        ]
+    },
+    "layers params" : {
+        "activation" : [
+            {"tuple" : ["ReLU", [], {}]},
+            {"tuple" : ["None", [], {}]}
+        ],
+        "bias" : 1,
+        "weights_inititilizers" : {
+            "tuple" : [
+                "xavier uniform", [],
+                {"gain" : 1.4142135623730951}
+            ]
+        },
+        "l2_activation" : 0.001,
+        "l1_activation" : 0.005
+    }
+}

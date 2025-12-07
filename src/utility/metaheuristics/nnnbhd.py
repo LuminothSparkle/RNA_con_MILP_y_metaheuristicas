@@ -4,7 +4,7 @@ A
 from numpy import ndarray
 import numpy.random as numpyrand
 from numpy.random import SeedSequence, Generator, PCG64
-from src.utility.metaheuristics.nnred import (
+from utility.metaheuristics.nnred import (
     remove_layer, remove_neuron, squeeze_weights, get_capacity
 )
 
@@ -27,11 +27,11 @@ def get_neighbors(
     capacity = get_capacity(weights)
     neighbors = []
     for layer, cap in enumerate(capacity[1:-1]):
-        failed = 0
+        failed = 1
         for i in range(cap):
-            prob = p + (1 - p) * (failed + 1) / cap
+            prob = p + (1 - p) * failed * (i + 1) / cap
             if gen.binomial(1, prob):
-                failed = -1
+                failed = 0
                 neighbors += [remove_neuron(weights, layer, [i])]
     for layer in range(len(weights) - 1):
         neighbors += [remove_layer(weights, layer)]

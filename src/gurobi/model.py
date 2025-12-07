@@ -13,7 +13,7 @@ from pandas import DataFrame, Index, read_csv
 from torch.nn import (
     Hardtanh, PReLU, LeakyReLU, Hardshrink, Softshrink, Threshold
 )
-from crossvalidation.files import safe_suffix
+from src.crossvalidation.files import safe_suffix
 from src.utility.nn.lineal import LinealNN
 from src.utility.io.model import load_model, save_model
 

@@ -6,18 +6,17 @@ from numpy import ndarray
 import numpy
 import numpy.random as numpyrand
 from numpy.random import Generator, SeedSequence, PCG64
-from torch.utils.data import Subset
-from src.utility.metaheuristics.fitness import WeightFitnessCalculator
-from src.utility.metaheuristics.nnnbhd import get_neighbors
+from utility.nn.trainer import TrainerNN
+from utility.nn.dataset import CsvDataset
+from utility.metaheuristics.fitness import WeightFitnessCalculator
+from utility.metaheuristics.nnnbhd import get_neighbors
 
 
 def hill_climb(
     weights: list[ndarray | None],
-    train_dataset: Subset,
-    test_dataset: Subset,
+    dataset: CsvDataset,
+    trainer: TrainerNN,
     p: float = 0.5,
-    epochs: int = 1,
-    batch_size: int = 1,
     seed: int | Generator | None = None
 ):
     """
@@ -30,12 +29,9 @@ def hill_climb(
         if isinstance(seed, int):
             seeder = SeedSequence(seed)
         generator = numpyrand.default_rng(PCG64(seeder))
-    fittner = WeightFitnessCalculator()
-    fittner.set_params(
-        train_dataset,
-        test_dataset,
-        epochs,
-        batch_size
+    fittner = WeightFitnessCalculator(
+        arch=trainer.model,trainer=trainer,
+        dataset=dataset
     )
     best_fitness, best_weights = fittner.evaluate(weights)
     while True:
@@ -45,8 +41,7 @@ def hill_climb(
             for neighbor in neighbors:
                 futures_list += [executor.submit(
                     fittner.evaluate,
-                    weights=neighbor,
-                    seed=generator
+                    weights=neighbor
                 )]
             neighbors = []
             fitnesses = []

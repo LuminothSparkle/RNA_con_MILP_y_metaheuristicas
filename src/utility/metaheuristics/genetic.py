@@ -4,12 +4,19 @@ A
 from concurrent.futures import ThreadPoolExecutor
 from typing import Callable
 import numpy
-from numpy.random import (
-    Generator, PCG64
-)
+from numpy import ndarray
+from numpy.random import Generator, PCG64
 import torch
 from torch import Tensor
+import utility.nn.torchdefault as torchdefault
 
+
+def get_chromosome(weights: list[ndarray], threshold: float = 0.0, **kwargs):
+    return torchdefault.tensor(numpy.concat([
+            (numpy.abs(weight) > threshold).ravel()
+            for weight in weights 
+    ]).ravel(), **kwargs)
+    
 
 def uniform_crossover(
     chromosome_a: Tensor, chromosome_b: Tensor,
@@ -331,7 +338,10 @@ def roulette_wheel_selection(
         )
     else:
         pointers = generator.uniform(0, total_fitness, survivors)
-    return numpy.searchsorted(a=cum_fitness, v=pointers, side='left').tolist()
+    return numpy.searchsorted(
+        a=cum_fitness, v=pointers,
+        side='left'
+    ).tolist()
 
 
 def parent_roulette_wheel_selection(
@@ -366,9 +376,11 @@ def poblation_roulette_wheel_selection(
         all_fitness, survivors, su_sampling, generator
     )
     survivor_old = [
-        survivor for survivor in survivor_list if survivor < len(old_fitness)
+        survivor for survivor in survivor_list
+        if survivor < len(old_fitness)
     ]
     survivor_new = [
-        survivor for survivor in survivor_list if survivor >= len(old_fitness)
+        survivor for survivor in survivor_list
+        if survivor >= len(old_fitness)
     ]
     return survivor_old, survivor_new

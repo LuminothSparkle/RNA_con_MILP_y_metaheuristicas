@@ -4,56 +4,63 @@ Codigo que entrena la red neuronal de Breast Cancer Winsconsin Diagnostic
 import argparse
 from argparse import ArgumentParser
 from pathlib import Path
-import torch
-from src.trainers.datasets import BCWDataset, test_arch
-from src.utility.io.nnjson import gen_from_tuple, read_arch_json, read_cv_json
-from src.crossvalidation.files import generate_cv_files
-from src.utility.io.crossval import save_crossvalidation
+from time import sleep
+from concurrent.futures import ThreadPoolExecutor
+from trainers.datasets import bcw_dataset
+from utility.nn.crossvalidation import CrossvalidationNN
+from utility.io.nnjson import gen_from_tuple, crossvalidator_json, dataset_json, trainer_json, arch_json
+from utility.io.crossvalidation import save_crossvalidation, load_crossvalidation
+from utility.nn.lineal import LinealNN
+from utility.signal import InterruptHandler
 
+
+def load_crossvalidator(load_path: Path, generate: bool = False):
+    if generate:
+        dataset_kwargs = dataset_json(load_path / 'dataset.json')
+        crossvalidator_kwargs = crossvalidator_json(load_path / 'crossvalidation.json')
+        crossvalidator_kwargs['crossvalidator'] = gen_from_tuple(crossvalidator_kwargs['crossvalidator'])
+        arch_kwargs = arch_json(load_path / 'architecture.json')
+        trainer_kwargs = trainer_json(load_path / 'trainer.json')
+        dataset = bcw_dataset(**dataset_kwargs)
+        arch_kwargs['capacity'] = [
+            sum(dataset.get_tensor_sizes('features')),
+            *arch_kwargs['capacity'],
+            sum(dataset.get_tensor_sizes('targets'))
+        ]
+        arch_kwargs['inference_layer'] = dataset.inference_function
+        arch_kwargs['loss_layer'] = dataset.loss_fn
+        crossvalidator = CrossvalidationNN.from_dataset(
+            dataset=dataset,
+            base_model=LinealNN.from_capacity(**arch_kwargs),
+            optimizer=trainer_kwargs['optimizer'][0],
+            optimizer_kwargs=trainer_kwargs['optimizer'][2],
+            scheculer=trainer_kwargs['scheduler'][0],
+            scheduler_kwargs=trainer_kwargs['scheduler'][2],
+            **crossvalidator_kwargs
+        )
+    else:
+        crossvalidator = load_crossvalidation(load_path)
+    return crossvalidator
 
 def main(args: argparse.Namespace):
     """
     Funcion main para generar la base de datos en archivo csv del archivo
     json del kardex anonimizado
     """
-    torch.set_default_device('cpu')
-    torch.set_default_dtype(torch.double)
-    if torch.cuda.is_available():
-        torch.set_default_device('cuda')
-        torch.set_default_dtype(torch.double)
-    cv_data = read_cv_json(args.cv_path)
-    arch_data = read_arch_json(args.arch_path)
-    cv_data['crossvalidator'] = gen_from_tuple(cv_data['crossvalidator'])
-    dataset = BCWDataset(**cv_data)
-    arch_data['capacity'] = [
-        dataset.features_size,
-        *arch_data['capacity'],
-        dataset.targets_size
-    ]
-    arch_data['inference_layer'] = dataset.inference_function
-    arch_data['loss_layer'] = dataset.loss_fn
-    if 'threads' in cv_data:
-        arch_data['threads'] = cv_data['threads']
-    results_dict = test_arch(
-        dataset=dataset,
-        iterations=cv_data['iterations'],
-        train_batches=cv_data['train_batches'],
-        **arch_data
-    )
-    results_path = args.save_path / 'results'
-    results_path.mkdir(parents=True, exist_ok=True)
-    save_crossvalidation(
-        file_path=results_path / 'crossvalidation.pt',
-        exists_ok=not args.no_overwrite,
-        **results_dict
-    )
-    if args.gen_data:
-        generate_cv_files(
-            dir_path=results_path,
-            name='bcw',
-            exists_ok=not args.no_overwrite,
-            **results_dict
-        )
+    crossvalidator = load_crossvalidator(args.load_path, not args.load)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(crossvalidator.crossvalidate)
+        with InterruptHandler() as handler:
+            while not future.done():
+                sleep(1)
+                crossvalidator.interrupted = handler.interrupted
+            if handler.interrupted:
+                print("Interrupted")
+        if future.result():
+            print("Terminó")
+        else:
+            print("No terminó")
+    save_crossvalidation(crossvalidator, args.save_path)
 
 
 if __name__ == '__main__':
@@ -71,20 +78,5 @@ if __name__ == '__main__':
         default=Path.cwd() / 'Data' /
         'Breast Cancer Winsconsin (Diagnostic)'
     )
-    argparser.add_argument(
-        '--arch_path', '-ap',
-        type=Path,
-        default=Path.cwd() / 'Data' /
-        'Breast Cancer Winsconsin (Diagnostic)' /
-        'crossvalidation' / 'arch.json'
-    )
-    argparser.add_argument(
-        '--cv_path', '-cp',
-        type=Path,
-        default=Path.cwd() / 'Data' /
-        'Breast Cancer Winsconsin (Diagnostic)' /
-        'crossvalidation' / 'cv.json'
-    )
-    argparser.add_argument('--no_overwrite', '-no', action='store_true')
-    argparser.add_argument('--gen_data', '-gd', action='store_true')
+    argparser.add_argument('--load', '-l', action='store_true')
     sys.exit(main(argparser.parse_args(sys.argv[1:])))

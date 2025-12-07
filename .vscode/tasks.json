@@ -67,19 +67,14 @@
             }
         },
         {
-            "label": "Regenerate neural networks for Breast Cancer",
+            "label": "Regenerate cv for Breast Cancer",
             "command": "python",
             "args": [
                 "${workspaceFolder}/src/trainers/bcw.py",
-                "--gen_data",
                 "--save_path",
-                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/",
                 "--load_path",
-                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)",
-                "--arch_path",
-                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/crossvalidation/arch_1.json",
-                "--cv_path",
-                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/crossvalidation/cv_1.json",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/crossvalidation/json_1/"
             ],
             "type": "shell",
             "group": {
@@ -92,20 +87,15 @@
             }
         },
         {
-            "label": "Regenerate minibatches for Breast Cancer",
+            "label": "Continue cv for Breast Cancer",
             "command": "python",
             "args": [
-                "${workspaceFolder}/src/gurobi/batchgen.py",
+                "${workspaceFolder}/src/trainers/bcw.py",
                 "--save_path",
-                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/gurobi",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/",
                 "--load_path",
-                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/dataframes",
-                "--batch_size",
-                "10",
-                "--load_name",
-                "bcw",
-                "--case_index",
-                "best"
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/",
+                "--load"
             ],
             "type": "shell",
             "group": {

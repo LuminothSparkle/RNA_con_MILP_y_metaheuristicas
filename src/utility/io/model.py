@@ -1,18 +1,13 @@
 """
 A
 """
-from copy import deepcopy
-from typing import Any
 from pathlib import Path
-import pickle
 import torch
-from src.utility.nn.lineal import LinealNN, set_defaults
+import utility.nn.torchdefault as torchdefault
+from utility.nn.lineal import LinealNN
 
 
-def save_model(
-    module: LinealNN, dir_path: Path,
-    name: str = '', exists_ok: bool = True
-):
+def save_model(module: LinealNN, dir_path: Path, name: str = ''):
     """_summary_
 
     Args:
@@ -21,151 +16,28 @@ def save_model(
         name (str, optional): _description_. Defaults to ''.
         exists_ok (bool, optional): _description_. Defaults to True.
     """
-    set_defaults()
-    save_torch_model(module, dir_path / f'{name}.pt', exists_ok)
-    save_torch_model_state(module, dir_path / f'{name}_state.pt', exists_ok)
-    save_onnx_model(module, dir_path / f'{name}.onnx', exists_ok)
-    save_train_onnx_model(module, dir_path / f'{name}_train.onnx', exists_ok)
-    save_traced_model(module, dir_path / f'{name}_traced.pt', exists_ok)
+    torchdefault.set_defaults()
+    save_onnx_model(module, dir_path / f'{name}.onnx')
+    save_train_onnx_model(module, dir_path / f'{name}_train.onnx')
+    save_traced_model(module, dir_path / f'{name}_traced.pt')
 
 
-def load_model(dir_path: Path, name: str = '', not_exists_ok: bool = True):
+def save_train_onnx_model(module: LinealNN, file_path: Path):
     """
     A
     """
-    set_defaults()
-    model = None
-    try:
-        model = load_torch_model(dir_path / f'{name}.pt', False)
-        assert isinstance(model, LinealNN), (
-            f"No se leyo correctamente {name}.pt"
-        )
-        return model
-    except AssertionError as ae:
-        print(ae)
-    try:
-        model = load_torch_model_state(dir_path / f'{name}_state.pt', False)
-        assert isinstance(model, LinealNN), (
-            f"No se leyo correctamente {name}_state.pt"
-        )
-        return model
-    except AssertionError as ae:
-        print(ae)
-    assert not_exists_ok or not isinstance(model, LinealNN), (
-        f"No existe algun archivo compatible con el nombre {name}"
-    )
-    return model
-
-
-def save_torch_model(
-    module: LinealNN, file_path: Path,
-    exists_ok: bool = True
-):
-    """_summary_
-
-    Args:
-        module (LinealNN): _description_
-        file_path (Path): _description_
-        exists_ok (bool, optional): _description_. Defaults to True.
-    """
-    set_defaults()
-    assert exists_ok or not file_path.exists(
-    ), f'El archivo {file_path} ya existe'
-    torch.save(module, file_path)
-
-
-def load_torch_model(file_path: Path, not_exists_ok: bool = False):
-    """_summary_
-
-    Args:
-        module (LinealNN): _description_
-        file_path (Path): _description_
-        exists_ok (bool, optional): _description_. Defaults to True.
-    """
-    set_defaults()
-    assert not_exists_ok or file_path.exists(), (
-        f"El archivo {file_path} no existe"
-    )
-    if file_path.exists():
-        return torch.load(
-            f=file_path,
-            map_location=torch.get_default_device(),
-            weights_only=False
-        )
-    return None
-
-
-def save_torch_model_state(
-    module: LinealNN, file_path: Path,
-    exists_ok: bool = True
-):
-    """_summary_
-
-    Args:
-        module (LinealNN): _description_
-        file_path (Path): _description_
-        exists_ok (bool, optional): _description_. Defaults to True.
-    """
-    set_defaults()
-    assert exists_ok or not file_path.exists(
-    ), f'El archivo {file_path} ya existe'
-    torch.save(module.state_dict(), file_path)
-
-
-def load_torch_model_state(file_path: Path, not_exists_ok: bool = False):
-    """_summary_
-
-    Args:
-        module (LinealNN): _description_
-        file_path (Path): _description_
-        exists_ok (bool, optional): _description_. Defaults to True.
-    """
-    set_defaults()
-    assert not_exists_ok or file_path.exists(), (
-        f"El archivo {file_path} no existe"
-    )
-    if file_path.exists():
-        state = torch.load(
-            f=file_path,
-            map_location=torch.get_default_device(),
-            weights_only=False
-        )
-        model = LinealNN()
-        model.load_state_dict(state, assign=True, strict=False)
-        return model
-    return None
-
-
-def save_train_onnx_model(
-    module: LinealNN, file_path: Path,
-    exists_ok: bool = True
-):
-    """
-    A
-    """
-    set_defaults()
     module.train()
-    save_onnx_model(module, file_path, exists_ok)
+    save_onnx_model(module, file_path)
     module.eval()
 
 
-def save_onnx_model(module: LinealNN, file_path: Path, exists_ok: bool = True):
-    """_summary_
-
-    Args:
-        module (LinealNN): _description_
-        file_path (Path): _description_
-        exists_ok (bool, optional): _description_. Defaults to True.
+def save_onnx_model(module: LinealNN, file_path: Path):
     """
-    assert exists_ok or not file_path.exists(
-    ), f'El archivo {file_path} ya existe'
+    A
+    """
     torch.set_default_device('cpu')
     torch.set_default_dtype(torch.double)
-    cpu_module = LinealNN()
-    cpu_module.load_state_dict(
-        deepcopy(module.state_dict()),
-        assign=True, strict=False
-    )
+    cpu_module = module.copy()
     cpu_module.to(device='cpu', dtype=torch.double, non_blocking=True)
     torch.onnx.export(
         model=cpu_module,
@@ -177,15 +49,13 @@ def save_onnx_model(module: LinealNN, file_path: Path, exists_ok: bool = True):
             ),
         ),
         input_names=['Features'],
-        output_names=['Preprobabilities'],
+        output_names=['Values'],
         export_params=True
     )
+    torchdefault.set_defaults()
 
 
-def save_script_model(
-    module: LinealNN, file_path: Path,
-    exists_ok: bool = True
-):
+def save_script_model(module: LinealNN, file_path: Path):
     """_summary_
 
     Args:
@@ -193,9 +63,7 @@ def save_script_model(
         file_path (Path): _description_
         exists_ok (bool, optional): _description_. Defaults to True.
     """
-    set_defaults()
-    assert exists_ok or not file_path.exists(
-    ), f'El archivo {file_path} ya existe'
+    torchdefault.set_defaults()
     torch.jit.script(
         obj=module,
         example_inputs=[(torch.ones((1, module.capacity[0])),)],
@@ -203,10 +71,7 @@ def save_script_model(
     ).save(file_path)
 
 
-def save_traced_model(
-    module: LinealNN, file_path: Path,
-    exists_ok: bool = True
-):
+def save_traced_model(module: LinealNN, file_path: Path):
     """_summary_
 
     Args:
@@ -214,9 +79,7 @@ def save_traced_model(
         file_path (Path): _description_
         exists_ok (bool, optional): _description_. Defaults to True.
     """
-    set_defaults()
-    assert exists_ok or not file_path.exists(
-    ), f'El archivo {file_path} ya existe'
+    torchdefault.set_defaults()
     torch.jit.save(
         torch.jit.trace_module(
             mod=module,
@@ -228,7 +91,7 @@ def save_traced_model(
     )
 
 
-def load_script_model(file_path: Path, not_exists_ok: bool = False):
+def load_script_model(file_path: Path):
     """_summary_
 
     Args:
@@ -237,27 +100,5 @@ def load_script_model(file_path: Path, not_exists_ok: bool = False):
     Returns:
         _type_: _description_
     """
-    set_defaults()
-    assert not_exists_ok or file_path.exists(), (
-        f"El archivo {file_path} no existe"
-    )
-    if file_path.exists():
-        return torch.jit.load(file_path)
-    return None
-
-
-def save_object(obj: Any, file_path: Path):
-    """
-    A
-    """
-    with file_path.open('wb') as fo:
-        pickle.dump(obj, fo, -1)
-
-
-def read_object(file_path: Path):
-    """
-    A
-    """
-    with file_path.open('rb') as fo:
-        obj = pickle.load(fo)
-    return obj
+    torchdefault.set_defaults()
+    return torch.jit.load(file_path, map_location=torch.get_default_device())

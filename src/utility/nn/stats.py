@@ -1,6 +1,7 @@
 """
 A
 """
+from itertools import accumulate
 import numpy
 from pandas import DataFrame
 import pandas
@@ -10,10 +11,11 @@ from sklearn.metrics import (
     recall_score, roc_auc_score, precision_score, average_precision_score,
     balanced_accuracy_score, mean_squared_error, r2_score,
     d2_absolute_error_score, matthews_corrcoef, f1_score,
-    log_loss, explained_variance_score
+    log_loss, explained_variance_score, confusion_matrix
 )
-from src.utility.nn.lineal import LinealNN
-from src.utility.nn.cvdataset import CrossvalidationDataset
+from utility.nn.lineal import LinealNN
+from utility.nn.dataset import CsvDataset
+import utility.nn.torchdefault as torchdefault
 
 
 class_metrics_labels = [
@@ -46,35 +48,6 @@ def weight_comparation(
     return stats
 
 
-def accuracy_comparation(
-    model_a: LinealNN, model_b: LinealNN,
-    dataset: CrossvalidationDataset,
-    test_indices: list[int] | None = None
-):
-    """
-    A
-    """
-    _, _, targets, predictions_a = dataset.prediction(
-        model_a, test_indices
-    )
-    _, _, _, predictions_b = dataset.prediction(
-        model_b, test_indices
-    )
-    a_over_b = numpy.sum(
-        (predictions_a == targets) * (predictions_b != targets)
-    )
-    b_over_a = numpy.sum(
-        (predictions_b == targets) * (predictions_a != targets)
-    )
-    a_b_good = numpy.sum(
-        (predictions_a == targets) * (predictions_b == targets)
-    )
-    a_b_bad = numpy.sum(
-        (predictions_a != targets) * (predictions_b != targets)
-    )
-    return a_b_good, a_over_b, b_over_a, a_b_bad
-
-
 def binomial_test(
     a_over_b: int, b_over_a: int,
     expected_mean: float
@@ -98,123 +71,262 @@ def mcnemar_test(a_over_b: int, b_over_a: int):
         (abs(a_over_b - b_over_a) - 1) ** 2 / (a_over_b + b_over_a)
     )
 
+def prediction_dataframes(
+    model: LinealNN, dataset: CsvDataset
+):
+    target_labels = dataset.labels['targets']
+    predicted_scores = {label:[] for label in target_labels}
+    target_scores = {label:[] for label in target_labels}
+    predicted_labels = {label:[] for label in target_labels}
+    target_labels = {label:[] for label in target_labels}
+    for features, targets in torchdefault.sequential_dataloader(
+        dataset=torchdefault.tensor_dataset(*dataset.generate_tensors(
+            dataframe=dataset.validation_dataframe, augment_tensor=False
+        ))
+    ):
+        tensor_sizes = dataset.get_tensor_sizes('targets')
+        predicted_tensor = model.inference(features)
+        target_tensor = targets.cpu().detach().numpy()
+        predicted_dataframe = dataset.generate_dataframe(
+            predicted_tensor,
+            'targets'
+        )
+        target_dataframe = dataset.generate_dataframe(
+            target_tensor,
+            'targets'
+        )
+        for label, predicted, target in zip(
+            target_labels,
+            numpy.split(predicted_tensor, list(accumulate(tensor_sizes[:-1]))),
+            numpy.split(target_tensor,    list(accumulate(tensor_sizes[:-1]))),
+        ):
+            predicted_scores[label] += [predicted]
+            target_scores[label]    += [target]
+            predicted_labels[label] += [predicted_dataframe[label].to_numpy().ravel()]
+            target_labels[label]    += [target_dataframe[label].to_numpy().ravel()]
+    df_prediction = dataset.validation_dataframe[dataset.labels['features']]
+    df_classes = DataFrame()
+    for label in target_labels:
+        target_labels = numpy.concat(target_labels[label], axis=0)
+        pred_labels = numpy.concat(predicted_labels[label], axis=0)
+        df_prediction.insert(0, f'{label} target labels', target_labels)
+        df_prediction.insert(0, f'{label} predicted labels', pred_labels)
+        if label in dataset.labels['class targets'] and len(dataset.encoder[label].classes_) > 2:
+            for class_label in dataset.encoder[label].classes_:
+                df_prediction.insert(0, f'{label} target scores {class_label}', numpy.concat(target_scores[label], axis=0))
+                df_prediction.insert(0, f'{label} predicted scores {class_label}', numpy.concat(predicted_scores[label], axis=0))    
+        else:
+            df_prediction.insert(0, f'{label} target scores', numpy.concat(target_scores[label], axis=0))
+            df_prediction.insert(0, f'{label} predicted scores', numpy.concat(predicted_scores[label], axis=0))
+        if label in dataset.labels['class targets']:
+            df_classes.insert(0, f'{label} classes', dataset.encoder[label].classes_)
+            df_classes.insert(0, f'{label} predicted', numpy.sum(
+                dataset.encoder[label].classes_.reshape(1,-1) == pred_labels.reshape((-1,1)),
+                axis=0
+            ).squeeze())
+            df_classes.insert(0, f'{label} target', numpy.sum(
+                dataset.encoder[label].classes_.reshape(1,-1) == target_labels.reshape((-1,1)),
+                axis=0
+            ).squeeze())
+    return {'prediction': df_prediction, 'classes': df_classes}
 
-def stats_dataframe(
-    model: LinealNN, dataset: CrossvalidationDataset,
-    test_indices: list[int] | None = None
+def stats_dataframes(
+    prediction_dataframe: DataFrame, classes_dataframe: DataFrame,
+    class_labels: list[str], regression_labels: list[str]
 ):
     """
     A
     """
-    class_labels = dataset.labels['class targets']
-    regression_labels = dataset.labels['regression targets']
-    tensor_targets, scores, targets, predictions = dataset.prediction(
-        model, test_indices
+    predicted_scores = {}
+    target_scores = {}
+    for label in class_labels:
+        classes = classes_dataframe[f'{label} classes'].dropna().to_numpy()
+        if len(classes) > 2:
+            predicted_score = prediction_dataframe.loc[
+                :, [f'{label} predicted scores {class_label}' for class_label in classes]
+            ].to_numpy()
+            target_score = prediction_dataframe.loc[
+                :, [f'{label} target scores {class_label}' for class_label in classes]
+            ].to_numpy()
+        else:
+            predicted_score = prediction_dataframe.loc[:, f'{label} predicted scores']
+            target_score = prediction_dataframe.loc[:, f'{label} target scores']
+        predicted_scores[label] = predicted_score
+        target_scores[label] = target_score
+    for label in regression_labels:
+        predicted_scores[label] = prediction_dataframe.loc[:, f'{label} predicted scores']
+        target_scores[label] = prediction_dataframe.loc[:, f'{label} target scores']
+    predicted_labels = {
+        label: prediction_dataframe.loc[:, f'{label} predicted labels'].to_numpy()
+        for label in [*class_labels, *regression_labels]
+    }
+    target_labels = {
+        label: prediction_dataframe.loc[:, f'{label} target labels'].to_numpy()
+        for label in [*class_labels, *regression_labels]
+    }
+    class_metrics = DataFrame(
+        index=class_labels,
+        columns=class_metrics_labels
     )
-    model_metrics = DataFrame(
-        index=[*class_labels, *regression_labels],
-        columns=[*class_metrics_labels, *regression_metrics_labels]
+    regression_metrics = DataFrame(
+        index=regression_labels,
+        columns=regression_metrics_labels
     )
     for label in class_labels:
-        model_metrics[label]['accuracy'] = (
+        class_metrics.at[label, 'accuracy'] = (
             accuracy_score(
-                y_true=targets[label],
-                y_pred=predictions[label],
+                y_true=target_labels[label],
+                y_pred=predicted_labels[label],
                 normalize=True
             )
         )
-        model_metrics[label]['recall'] = (
+        class_metrics.at[label, 'recall'] = (
             recall_score(
-                y_true=targets[label],
-                y_pred=predictions[label],
+                y_true=target_labels[label],
+                y_pred=predicted_labels[label],
                 average='weighted'
             )
         )
-        model_metrics[label]['precision'] = (
+        class_metrics.at[label, 'precision'] = (
             precision_score(
-                y_true=targets[label],
-                y_pred=predictions[label],
+                y_true=target_labels[label],
+                y_pred=predicted_labels[label],
                 average='weighted'
             )
         )
-        model_metrics[label]['f1 score'] = (
+        class_metrics.at[label, 'f1 score'] = (
             f1_score(
-                y_true=targets[label],
-                y_pred=predictions[label],
+                y_true=target_labels[label],
+                y_pred=predicted_labels[label],
                 average='weighted'
             )
         )
-        model_metrics[label]['balanced accuracy'] = (
+        class_metrics.at[label, 'balanced accuracy'] = (
             balanced_accuracy_score(
-                y_true=targets[label],
-                y_pred=predictions[label]
+                y_true=target_labels[label],
+                y_pred=predicted_labels[label]
             )
         )
-        model_metrics[label]['log loss'] = (
-            log_loss(
-                y_true=targets[label],
-                y_pred=scores[label]
-            )
-        )
-        model_metrics[label]['average precision'] = (
-            average_precision_score(
-                y_true=tensor_targets[label].round().astype(int),
-                y_score=scores[label],
-                average='weighted'
-            )
-        )
-        model_metrics[label]['roc auc'] = (
-            roc_auc_score(
-                y_true=tensor_targets[label].round().astype(int),
-                y_score=scores[label],
-                average='weighted'
-            )
-        )
-        model_metrics[label]['matthews corrcoef'] = (
+        class_metrics.at[label, 'matthews corrcoef'] = (
             matthews_corrcoef(
-                y_true=targets[label],
-                y_pred=predictions[label]
+                y_true=target_labels[label],
+                y_pred=predicted_labels[label]
+            )
+        )
+        class_metrics.at[label, 'log loss'] = (
+            log_loss(
+                y_true=target_scores[label],
+                y_pred=predicted_scores[label]
+            )
+        )
+        class_metrics.at[label, 'average precision'] = (
+            average_precision_score(
+                y_true=target_scores[label],
+                y_score=predicted_scores[label],
+                average='weighted'
+            )
+        )
+        class_metrics.at[label, 'roc auc'] = (
+            roc_auc_score(
+                y_true=target_scores[label],
+                y_score=predicted_scores[label],
+                average='weighted'
             )
         )
     for label in regression_labels:
-        model_metrics[label]['absolute'] = (
+        regression_metrics.at[label, 'absolute'] = (
             mean_absolute_error(
-                y_true=targets[label],
-                y_pred=predictions[label]
+                y_true=target_labels[label],
+                y_pred=predicted_labels[label]
             )
         )
-        model_metrics[label]['absolute percentage'] = (
+        regression_metrics.at[label, 'absolute percentage'] = (
             mean_absolute_percentage_error(
-                y_true=targets[label],
-                y_pred=predictions[label]
+                y_true=target_labels[label],
+                y_pred=predicted_labels[label]
             )
         )
-        model_metrics[label]['squared'] = (
+        regression_metrics.at[label, 'squared'] = (
             mean_squared_error(
-                y_true=targets[label],
-                y_pred=predictions[label]
+                y_true=target_labels[label],
+                y_pred=predicted_labels[label]
             )
         )
-        model_metrics[label]['r2 score'] = (
+        regression_metrics.at[label, 'r2 score'] = (
             r2_score(
-                y_true=targets[label],
-                y_pred=predictions[label]
+                y_true=target_labels[label],
+                y_pred=predicted_labels[label]
             )
         )
-        model_metrics[label]['d2 absolute'] = (
+        regression_metrics.at[label, 'd2 absolute'] = (
             d2_absolute_error_score(
-                y_true=targets[label],
-                y_pred=predictions[label]
+                y_true=target_labels[label],
+                y_pred=predicted_labels[label]
             )
         )
-        model_metrics[label]['explained variance'] = (
+        regression_metrics.at[label, 'explained variance'] = (
             explained_variance_score(
-                y_true=targets[label],
-                y_pred=predictions[label]
+                y_true=target_labels[label],
+                y_pred=predicted_labels[label]
             )
         )
-    model_metrics.replace(numpy.nan, pandas.NA, inplace=True)
-    return model_metrics
+    return {'class': class_metrics, 'regression': regression_metrics}
+
+def label_dataframes(metrics_dataframes: list[DataFrame], labels: list[str]):
+    return {
+        label: pandas.concat(
+            objs=[dataframe.loc[[label],:] for dataframe in metrics_dataframes],
+            axis='index',
+            join='outer',
+            ignore_index=True
+        )
+        for label in labels
+    }
+
+def confusion_matrix_dataframes(
+    predictions_dataframe: DataFrame,
+    classes_dataframe: DataFrame,
+    class_labels: list[str]
+):
+    data_dict = {}
+    for label in class_labels:
+        classes = classes_dataframe[f'{label} classes'].dropna().to_numpy()
+        target = predictions_dataframe.loc[:,f'{label} target labels'].to_numpy()
+        predicted = predictions_dataframe.loc[:,f'{label} predicted labels'].to_numpy()
+        data_dict[label] = {}
+        data_dict[label]['none'] = DataFrame(
+            data=confusion_matrix(
+                y_pred=predicted, y_true=target,
+                normalize=None,   labels=classes
+            ),
+            columns=classes,
+            index=classes
+        )
+        data_dict[label]['pred'] = DataFrame(
+            data=confusion_matrix(
+                y_pred=predicted, y_true=target,
+                normalize='pred',   labels=classes
+            ),
+            columns=classes,
+            index=classes
+        )
+        data_dict[label]['true'] = DataFrame(
+            data=confusion_matrix(
+                y_pred=predicted, y_true=target,
+                normalize='true',   labels=classes
+            ),
+            columns=classes,
+            index=classes
+        )
+        data_dict[label]['all'] = DataFrame(
+            data=confusion_matrix(
+                y_pred=predicted, y_true=target,
+                normalize='all',   labels=classes
+            ),
+            columns=classes,
+            index=classes
+        )
+    return data_dict
 
 
 def generate_percetages(data: DataFrame):
@@ -232,17 +344,23 @@ def mean_stats_dataframes(models_dataframes: list[DataFrame]):
     """
     A
     """
+    if len(models_dataframes) == 0:
+        return DataFrame()
+    data_array = numpy.concat(
+        [
+            numpy.atleast_3d(dataframe.to_numpy(na_value=numpy.nan))
+            for dataframe in models_dataframes
+        ],
+        axis=2
+    )
+    data_nan = numpy.all(a=numpy.logical_not(numpy.isnan(data_array.astype(float))), axis=2)
+    df_data = numpy.full(data_nan.shape, fill_value=numpy.nan)
+    df_data[data_nan] = numpy.nanmean(
+        a=data_array[data_nan],
+        axis=1,
+    )
     mean_dataframe = DataFrame(
-        numpy.nanmean(
-            numpy.stack(
-                [
-                    numpy.atleast_3d(dataframe.to_numpy())
-                    for dataframe in models_dataframes
-                ],
-                axis=2
-            ),
-            axis=2
-        ),
+        data=df_data,
         index=models_dataframes[0].index,
         columns=models_dataframes[0].columns
     )
