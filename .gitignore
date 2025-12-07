@@ -6,5 +6,4 @@
 *.onnx
 *.pyc
 *.pdf
-*.pyc
-/src/utility/nn/__pycache__
+*/__pycache__
