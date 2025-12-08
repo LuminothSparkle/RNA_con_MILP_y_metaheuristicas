@@ -85,7 +85,7 @@ def prediction_dataframes(
         ))
     ):
         tensor_sizes = dataset.get_tensor_sizes('targets')
-        predicted_tensor = model.inference(features)
+        predicted_tensor = dataset.inference_function(model(features)).cpu().detach().numpy()
         target_tensor = targets.cpu().detach().numpy()
         predicted_dataframe = dataset.generate_dataframe(
             predicted_tensor,

@@ -1,20 +1,16 @@
 {
-    "verbose" : "v",
     "capacity" : [2],
-    "seed" : 42,
     "layers_params" : {
         "activation" : [
             {"tuple" : ["ReLU", [], {}]},
             {"tuple" : ["None", [], {}]}
         ],
         "bias" : 1,
-        "weights_inititilizers" : {
+        "weights_initializers" : {
             "tuple" : [
                 "xavier uniform", [],
                 {"gain" : 1.4142135623730951}
             ]
-        },
-        "l2_activation" : 0.001,
-        "l1_activation" : 0.005
+        }
     }
 }

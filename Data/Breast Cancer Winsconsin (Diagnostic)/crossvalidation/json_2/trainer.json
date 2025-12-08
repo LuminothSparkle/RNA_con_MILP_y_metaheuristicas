@@ -1,12 +1,13 @@
 {
     "epochs" : 10,
     "overfit_tolerance" : 3,
+    "train_batches" : 100,
     "optimizer" : {
         "tuple" : [
-            "Adam", [],
+            "AdamW", [],
             {
                 "fused" : true,
-                "lr" : 0.001
+                "lr" : 0.01
             }
         ]
     },
@@ -22,5 +23,9 @@
                 "gamma" : 0.9
             }
         ]
+    },
+    "layers_params" : {
+        "l2_activation" : 0.001,
+        "l1_activation" : 0.005
     }
 }

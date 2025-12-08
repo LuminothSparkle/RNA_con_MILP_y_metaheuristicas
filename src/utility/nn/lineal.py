@@ -2,10 +2,8 @@
 Modulo que contiene la implemtación general de una
 arquitectura de red neuronal en Pytorch
 """
-from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from typing import Any
-from collections.abc import Callable
 import numpy
 from numpy import ndarray
 import torch
@@ -44,6 +42,22 @@ def gen_linear_layer(layer: int, capacity: list[int]):
         if capacity[layer] > 0
         else Identity()
     )
+
+def process_layer_param(param: Any, layers: int):
+    return [
+        param if (
+            not isinstance(param, list) and
+            not isinstance(param, dict)
+        )
+        else param[k] if (
+            isinstance(param, list)
+            or isinstance(param, dict) and k in param
+        )
+        else param[str(k)]
+        if isinstance(param, dict) and str(k) in param
+        else None
+        for k in range(layers)
+    ]
 
 
 class LinealNN(Module):
@@ -87,253 +101,79 @@ class LinealNN(Module):
         'sparse': sparse_,
         'orthogonal': orthogonal_
     }
-    layers: int
-    capacity: list[int]
-    bias: list[float]
-    bias_layers: ModuleList
-    dropout: list[float | None]
-    dropout_layers: ModuleList
-    batch_norm: list[bool]
-    batch_norm_layers: ModuleList
-    linear_layers: ModuleList
-    activation: list[tuple[str, Any, dict]]
     activation_layers: ModuleList
     sequential_layers: ModuleList
-    loss_layer: Module
-    inference_layer: Module
+    bias_layers: ModuleList
+    dropout_layers: ModuleList
+    batch_norm_layers: ModuleList
+    linear_layers: ModuleList
     activations: list[Tensor | None]
-    masks: list[Tensor]
-    weights_initializers: list[tuple[Any, Any, dict] | None]
-    l1_weight: list[float | None]
-    l1_activation: list[float | None]
-    l2_weight: list[float | None]
-    l2_activation: list[float | None]
-    connection_dropout: list[float | None]
-    verbosity: int
-    overfit_tolerance: int | None
-    seed: int | None
-    learnable_layers: list[bool]
+    masks_layer: list[Tensor | None]
+    layers: int
+    capacity: list[int]
+    masks: list[Tensor | None] | dict[str|int, Tensor | None] | Tensor | None
+    bias: list[float | None] | dict[str|int, float | None] | float | None
+    dropout: list[float | None] | dict[str|int, float | None] | float | None
+    batch_norm: list[bool | None] | dict[str|int, bool | None] | bool | None
+    activation: list[tuple[str, Any, dict]  | None] | dict[str|int, tuple[str, Any, dict] | None] | tuple[str, Any, dict] | None
+    weights_initializers: list[tuple[Any, Any, dict]  | None] | dict[str|int, tuple[Any, Any, dict]  | None] | tuple[Any, Any, dict]  | None
+    learnable_layers: list[bool  | None] | dict[str|int, bool | None] | bool | None
 
-    def __init__(self):
+    def __init__(
+        self, capacity: list[int] | None = None,
+        masks: list[Tensor | None] | dict[str|int, Tensor | None] | Tensor | None = None,
+        bias: list[float | None] | dict[str|int, float | None] | float | None = None,
+        dropout: list[float | None] | dict[str|int, float | None] | float | None = None,
+        batch_norm: list[bool | None] | dict[str|int, bool | None] | bool | None = None,
+        activation: list[tuple[str, Any, dict]  | None] | dict[str|int, tuple[str, Any, dict] | None] | tuple[str, Any, dict] | None = None,
+        weights_initializers: list[tuple[Any, Any, dict]  | None] | dict[str|int, tuple[Any, Any, dict]  | None] | tuple[Any, Any, dict]  | None = None,
+        learnable_layers: list[bool  | None] | dict[str|int, bool | None] | bool | None = None
+    ):
         super().__init__()
-        torchdefault.set_defaults()
-        self.seed = None
-        self.layers = -1
-        self.verbosity = 0
-        self.overfit_tolerance = None
-        self.capacity = []
-        self.bias = []
-        self.dropout = []
-        self.batch_norm = []
-        self.activation = []
-        self.masks = []
-        self.weights_initializers = []
-        self.activations = []
-        self.l1_weight = []
-        self.l2_weight = []
-        self.l1_activation = []
-        self.l2_activation = []
-        self.connection_dropout = []
-        self.learnable_layers = []
-        self.log = {}
-        self.loss_layer = Identity()
-        self.inference_layer = Identity()
-        self.optimizer = None
-        self.scheduler = None
-        self.__initialize_layers(capacity=[])
-
-    @classmethod
-    def from_capacity(cls, capacity: list[int], **kwargs):
-        """
-        A
-        """
-        torchdefault.set_defaults()
-        assert capacity[-1] > 0 and capacity[0] > 0, (
-            "La capacidad final e inicial deben ser mayor a cero"
+        self.start(
+            capacity=capacity, masks=masks, bias=bias, dropout=dropout, batch_norm=batch_norm,
+            activation=activation, weights_initializers=weights_initializers,
+            learnable_layers=learnable_layers
         )
-        model = cls()
-        model.capacity = capacity
-        layers = len(capacity) - 1
-        if 'overfit_tolerance' in kwargs:
-            model.overfit_tolerance = kwargs['overfit_tolerance']
-        if 'inference_layer' in kwargs:
-            if isinstance(kwargs['inference_layer'], Module):
-                model.inference_layer = kwargs['inference_layer']
-            else:
-                model.inference_layer = InferenceModule(
-                    kwargs['inference_layer']
-                )
-        if 'loss_layer' in kwargs:
-            if isinstance(kwargs['loss_layer'], Module):
-                model.loss_layer = kwargs['loss_layer']
-            else:
-                model.loss_layer = LossModule(kwargs['loss_layer'])
-        model.learnable_layers = [True for _ in range(layers)]
-        model.bias = [  # type: ignore
-            1.0 if (
-                'bias' not in kwargs
-                or isinstance(kwargs['bias'], dict)
-                and k not in kwargs['bias']
-            )
-            else kwargs['bias'][k]
-            if (
-                isinstance(kwargs['bias'], list)
-                or isinstance(kwargs['bias'], dict)
-                and k in kwargs['bias']
-            )
-            else kwargs['bias']
-            for k in range(layers)
-        ]
-        model.dropout = [  # type: ignore
-            None if (
-                'dropout' not in kwargs
-                or isinstance(kwargs['dropout'], dict)
-                and k not in kwargs['dropout']
-            )
-            else kwargs['dropout'][k]
-            if (
-                isinstance(kwargs['dropout'], list)
-                or isinstance(kwargs['dropout'], dict)
-                and k in kwargs['dropout']
-            )
-            else kwargs['dropout']
-            for k in range(layers)
-        ]
-        model.connection_dropout = [  # type: ignore
-            None if (
-                'connection_dropout' not in kwargs
-                or isinstance(kwargs['connection_dropout'], dict)
-                and k not in kwargs['connection_dropout']
-            )
-            else kwargs['connection_dropout'][k]
-            if (
-                isinstance(kwargs['connection_dropout'], list)
-                or isinstance(kwargs['connection_dropout'], dict)
-                and k in kwargs['connection_dropout']
-            )
-            else kwargs['connection_dropout']
-            for k in range(layers)
-        ]
-        model.batch_norm = [  # type: ignore
-            False if (
-                'batch_norm' not in kwargs
-                or isinstance(kwargs['batch_norm'], dict)
-                and k not in kwargs['batch_norm']
-            )
-            else kwargs['batch_norm'][k]
-            if (
-                isinstance(kwargs['batch_norm'], list)
-                or isinstance(kwargs['batch_norm'], dict)
-                and k in kwargs['batch_norm']
-            )
-            else kwargs['batch_norm']
-            for k in range(layers)
-        ]
-        model.activation = [  # type: ignore
-            ('None',) if (
-                'activation' not in kwargs
-                or isinstance(kwargs['activation'], dict)
-                and k not in kwargs['activation']
-            )
-            else kwargs['activation'][k]
-            if (
-                isinstance(kwargs['activation'], list)
-                or isinstance(kwargs['activation'], dict)
-                and k in kwargs['activation']
-            )
-            else kwargs['activation']
-            for k in range(layers)
-        ]
-        model.weights_initializers = [  # type: ignore
-            None if (
-                'weights_initializers' not in kwargs
-                or isinstance(kwargs['weights_initializers'], dict)
-                and k not in kwargs['weights_initializers']
-            )
-            else kwargs['weights_initializers'][k]
-            if (
-                isinstance(kwargs['weights_initializers'], list)
-                or isinstance(kwargs['weights_initializers'], dict)
-                and k in kwargs['weights_initializers']
-            )
-            else kwargs['weights_initializers']
-            for k in range(layers)
-        ]
-        model.l1_weight = [  # type: ignore
-            None if (
-                'l1_weight' not in kwargs
-                or k + 1 >= layers
-                or isinstance(kwargs['l1_weight'], dict)
-                and k not in kwargs['l1_weight']
-            )
-            else kwargs['l1_weight'][k]
-            if (
-                isinstance(kwargs['l1_weight'], list)
-                or isinstance(kwargs['l1_weight'], dict)
-                and k in kwargs['l1_weight']
-            )
-            else kwargs['l1_weight']
-            for k in range(layers)
-        ]
-        model.l1_activation = [  # type: ignore
-            None if (
-                'l1_activation' not in kwargs
-                or k + 1 >= layers
-                or isinstance(kwargs['l1_activation'], dict)
-                and k not in kwargs['l1_activation']
-            )
-            else kwargs['l1_activation'][k]
-            if (
-                isinstance(kwargs['l1_activation'], list)
-                or isinstance(kwargs['l1_activation'], dict)
-                and k in kwargs['l1_activation']
-            )
-            else kwargs['l1_activation']
-            for k in range(layers)
-        ]
-        model.l2_weight = [  # type: ignore
-            None if (
-                'l2_weight' not in kwargs
-                or k + 1 >= layers
-                or isinstance(kwargs['l2_weight'], dict)
-                and k not in kwargs['l2_weight']
-            )
-            else kwargs['l2_weight'][k]
-            if (
-                isinstance(kwargs['l2_weight'], list)
-                or isinstance(kwargs['l2_weight'], dict)
-                and k in kwargs['l2_weight']
-            )
-            else kwargs['l2_weight']
-            for k in range(layers)
-        ]
-        model.l2_activation = [  # type: ignore
-            None if (
-                'l2_activation' not in kwargs
-                or k + 1 >= layers
-                or isinstance(kwargs['l2_activation'], dict)
-                and k not in kwargs['l2_activation']
-            )
-            else kwargs['l2_activation'][k]
-            if (
-                isinstance(kwargs['l2_activation'], list)
-                or isinstance(kwargs['l2_activation'], dict)
-                and k in kwargs['l2_activation']
-            )
-            else kwargs['l2_activation']
-            for k in range(layers)
-        ]
-        model.verbosity = (
-            kwargs['verbose'].count('v')
-            if isinstance(kwargs['verbose'], str)
-            else 0
-        )
-        model.__initialize_layers(capacity=capacity)
-        model.set_masks(kwargs['masks'] if 'masks' in kwargs else None)
-        return model
 
-    def set_capacity(self, capacity: list[int]):
-        self.__initialize_layers(capacity=capacity)
+    def start(self, capacity: list[int] | None = None,
+        masks: list[Tensor | None] | dict[str|int, Tensor | None] | Tensor | None = None,
+        bias: list[float | None] | dict[str|int, float | None] | float | None = None,
+        dropout: list[float | None] | dict[str|int, float | None] | float | None = None,
+        batch_norm: list[bool | None] | dict[str|int, bool | None] | bool | None = None,
+        activation: list[tuple[str, Any, dict]  | None] | dict[str|int, tuple[str, Any, dict] | None] | tuple[str, Any, dict] | None = None,
+        weights_initializers: list[tuple[Any, Any, dict]  | None] | dict[str|int, tuple[Any, Any, dict]  | None] | tuple[Any, Any, dict]  | None = None,
+        learnable_layers: list[bool  | None] | dict[str|int, bool | None] | bool | None = None
+    ):
+        torchdefault.set_defaults()
+        if capacity is None:
+            capacity = []
+        self.bias = bias
+        self.dropout = dropout
+        self.batch_norm = batch_norm
+        self.activation = activation
+        self.weights_initializers = weights_initializers
+        self.learnable_layers = learnable_layers
+        self.set_capacity(capacity=capacity)
+        self.set_masks(masks)
+
+    def state_dict(self, keep_vars=True, **kwargs):
+        return {'init': {
+            'capacity': self.capacity,
+            'bias': self.bias,
+            'dropout': self.dropout,
+            'batch_norm': self.batch_norm,
+            'masks': self.masks,
+            'weights_initializers': self.weights_initializers,
+            'learnable_layers': self.learnable_layers
+        }} | super().state_dict(keep_vars=keep_vars, **kwargs)
+
+    def load_state_dict(self, state_dict: dict, strict = True, assign = True):
+        new_state_dict = deepcopy(state_dict)
+        init = new_state_dict.pop('init')
+        self.start(**init)
+        r = super().load_state_dict(state_dict=new_state_dict, strict=strict, assign=assign)
+        return r
 
     def set_masks(
         self,
@@ -343,62 +183,54 @@ class LinealNN(Module):
         A
         """
         torchdefault.set_defaults()
-        self.masks = [  # type: ignore
-            (
-                torch.ones((
-                    next(
-                        cap for cap in self.capacity[(k + 1):]
-                        if cap > 0
-                    ),
-                    self.capacity[k] + 1
-                )).bool()
-                if masks[k] is None
-                else masks[k]
-            )
-            if (
-                isinstance(masks, list)
-                or isinstance(masks, dict)
-                and k in masks
-            )
-            else torch.ones((
+        self.masks = masks
+        self.masks_layer = [  # type: ignore
+            torch.ones((
                 next(
                     cap for cap in self.capacity[(k + 1):]
                     if cap > 0
                 ),
                 self.capacity[k] + 1
             )).bool()
-            for k in range(self.layers)
+            if mask is None
+            else mask
+            for k, mask in zip(
+                range(self.layers),
+                process_layer_param(self.masks, self.layers)
+            )
         ]
         self.__update_masks()
 
-    def __initialize_layers(self, capacity: list[int]):
+    def set_capacity(self, capacity: list[int]):
         torchdefault.set_defaults()
-        layers = len(capacity) - 1
+        self.capacity = capacity
+        self.layers = len(capacity) - 1
         self.bias_layers = ModuleList([
-            ConstantPad1d((0, 1), 1) for _ in range(layers)
+            ConstantPad1d((0, 1), param)
+            if param is not None else ConstantPad1d((0, 1), 1)
+            for param in process_layer_param(self.bias, self.layers)
         ])
         self.dropout_layers = ModuleList([
-            Dropout(p=self.dropout[k], inplace=True)  # type: ignore
-            if self.dropout[k] is not None
-            else Identity()
-            for k in range(layers)
+            Dropout(p=param, inplace=True)
+            if param is not None else Identity()
+            for param in process_layer_param(self.dropout, self.layers)
         ])
         self.batch_norm_layers = ModuleList([
             BatchNorm1d(self.capacity[k])
-            if self.batch_norm[k]
-            else Identity()
-            for k in range(layers)
+            if param is not None and param else Identity()
+            for k, param in zip(
+                range(self.layers),
+                process_layer_param(self.batch_norm, self.layers)
+            )
         ])
         self.linear_layers = ModuleList([
             gen_linear_layer(k, self.capacity)
-            for k in range(layers)
+            for k in range(self.layers)
         ])
         self.activation_layers = ModuleList([
-            self.functional_dict[self.activation[k][0]](
-                *self.activation[k][1],
-                **self.activation[k][2]
-            )
-            for k in range(layers)
+            self.functional_dict[param[0]](*param[1],**param[2])
+            if param is not None and param else Identity()
+            for param in process_layer_param(self.activation, self.layers)
         ])
         self.sequential_layers = ModuleList([
             Sequential(
@@ -408,22 +240,20 @@ class LinealNN(Module):
                 self.linear_layers[k],
                 self.activation_layers[k]
             )
-            for k in range(layers)
+            for k in range(self.layers)
         ])
-        self.activations = [None for _ in range(layers)]
+        self.activations = [None for _ in range(self.layers)]
         for linear_layer, initializer in zip(
             self.linear_layers,
-            self.weights_initializers
+            process_layer_param(self.weights_initializers, self.layers)
         ):
             if isinstance(linear_layer, Linear):
                 if initializer is not None:
-                    initializer[0](
+                    self.init_dict[initializer[0]](
                         linear_layer.weight,
                         *initializer[1],
                         **initializer[2]
                     )
-        self.layers = layers
-        self.__update_masks()
         self.__update_learnable_layers()
 
     def __update_masks(self):
@@ -431,11 +261,8 @@ class LinealNN(Module):
         A
         """
         torchdefault.set_defaults()
-        for mask, linear_layer in zip(
-            self.masks,
-            self.linear_layers
-        ):
-            if isinstance(linear_layer, Linear):
+        for mask, linear_layer in zip(self.masks_layer, self.linear_layers):
+            if isinstance(linear_layer, Linear) and mask is not None:
                 linear_layer.weight.data.copy_(
                     linear_layer.weight * mask.type_as(  # type: ignore
                         linear_layer.weight  # type: ignore
@@ -443,11 +270,11 @@ class LinealNN(Module):
                 )
 
     def __update_learnable_layers(self):
-        torchdefault.set_defaults()
         for sequential_layer, learnable in zip(
-            self.sequential_layers, self.learnable_layers
+            self.sequential_layers,
+            process_layer_param(self.learnable_layers, self.layers)
         ):
-            sequential_layer.requires_grad_(learnable)
+            sequential_layer.requires_grad_(learnable if learnable is not None else True)
 
     def forward(self, input_tensor: Tensor) -> Tensor:
         """
@@ -460,175 +287,6 @@ class LinealNN(Module):
             x = layer(x)
             self.activations[k] = x
         return x
-
-    def l2_weight_regularization(self):
-        """
-        A
-        """
-        torchdefault.set_defaults()
-        l2_layers = [
-            (
-                norm_weight *
-                linear_layer.weight.square().mean()  # type: ignore
-            ).unsqueeze(dim=0)
-            for linear_layer, norm_weight in zip(
-                self.linear_layers,
-                self.l2_weight
-            ) if norm_weight is not None
-        ]
-        if len(l2_layers) > 0:
-            return torch.concat(l2_layers).mean()
-        return torchdefault.tensor(0)
-
-    def l1_activation_regularization(self):
-        """
-        A
-        """
-        torchdefault.set_defaults()
-        l1_layers = [
-            (
-                norm_weight
-                * activation.abs().mean()  # type: ignore
-            ).unsqueeze(dim=0)
-            for activation, norm_weight in zip(
-                self.activations,
-                self.l1_activation
-            ) if norm_weight is not None
-        ]
-        if len(l1_layers) > 0:
-            return torch.concat(l1_layers).mean()
-        return torchdefault.tensor(0)
-
-    def l2_activation_regularization(self):
-        """
-        A
-        """
-        torchdefault.set_defaults()
-        l2_layers = [
-            (
-                norm_weight
-                * activation.square().mean()  # type: ignore
-            ).unsqueeze(dim=0)
-            for activation, norm_weight in zip(
-                self.activations,
-                self.l2_activation
-            ) if norm_weight is not None
-        ]
-        if len(l2_layers) > 0:
-            return torch.concat(l2_layers).mean()
-        return torchdefault.tensor(0)
-
-    def l1_weight_regularization(self):
-        """
-        A
-        """
-        torchdefault.set_defaults()
-        l1_layers = [
-            (
-                norm_weight
-                * linear_layer.weight.abs().mean()  # type: ignore
-            ).unsqueeze(dim=0)
-            for linear_layer, norm_weight in zip(
-                self.linear_layers,
-                self.l1_weight
-            ) if norm_weight is not None
-        ]
-        if len(l1_layers) > 0:
-            return torch.concat(l1_layers).mean()
-        return torchdefault.tensor(0)
-
-    def train_closure(self, features: Tensor, targets: Tensor):
-        torchdefault.set_defaults()
-        results = {}
-        self.train()
-        weights_copy = []
-        for linear_layer, connect_dropout, mask in (
-            (linear_layer, connect_dropout, mask)
-            for linear_layer, connect_dropout, mask in zip(
-                self.linear_layers,
-                self.connection_dropout,
-                self.masks
-            ) if connect_dropout is not None
-        ):
-            weight = linear_layer.weight
-            connection_mask = torch.full_like(
-                weight,  # type: ignore
-                connect_dropout,
-                dtype=torch.get_default_dtype(),
-                device=torch.get_default_device()
-            ).bernoulli().bool()
-            weight_mask = mask.bitwise_and(connection_mask)
-            linear_layer.weight = (
-                weight.clone() * weight_mask.type_as(  # type: ignore
-                    weight  # type: ignore
-                )
-            )
-            weights_copy += [weight]
-        if self.optimizer is not None:
-            self.optimizer.zero_grad()
-        loss = self.loss_layer(self(features), targets)
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            l1a_future = executor.submit(
-                self.l1_activation_regularization
-            )
-            l2a_future = executor.submit(
-                self.l2_activation_regularization
-            )
-            l1w_future = executor.submit(
-                self.l1_weight_regularization
-            )
-            l2w_future = executor.submit(
-                self.l2_weight_regularization
-            )
-            results['raw_loss'] = loss.cpu().detach().item()
-            loss += (
-                l1w_future.result() + l2w_future.result() +
-                l1a_future.result() + l2a_future.result()
-            )
-            results['norm_loss'] = loss.cpu().detach().item()
-        loss.backward()
-        for weight, (linear_layer, connect_dropout, mask) in zip(
-            weights_copy,
-            (
-                (linear_layer, connect_dropout, mask)
-                for linear_layer, connect_dropout, mask in zip(
-                    self.linear_layers,
-                    self.connection_dropout,
-                    self.masks
-                ) if connect_dropout is not None
-            )
-        ):
-            linear_layer.weight = weight  # type: ignore
-        for linear_layer, mask in zip(
-            self.linear_layers, self.masks
-        ):
-            linear_layer.weight.grad.copy_(  # type: ignore
-                linear_layer.weight.grad
-                * mask.type_as(  # type: ignore
-                    linear_layer.weight.grad  # type: ignore
-                )
-            )
-        self.eval()
-        return results
-
-    def inference(self, x: Tensor):
-        """
-        Ciclo principal para obtener solamente la inferencia de la red neuronal
-        sobre un conjunto de datos
-        """
-        torchdefault.set_defaults()
-        with torch.inference_mode():
-            return self.inference_layer(
-                self(x)
-            ).cpu().detach().numpy()
-
-    def loss(self, features: Tensor, target: Tensor):
-        torchdefault.set_defaults()
-        with torch.inference_mode():
-            return self.loss_layer(
-                self(features),
-                target
-            ).cpu().detach().numpy()
 
     def get_weights(self):
         """
@@ -664,19 +322,23 @@ class LinealNN(Module):
         que contiene los pesos de las capas lineales en una red neuronal
         """
         torchdefault.set_defaults()
-        for k in range(self.layers):
+        for k, mask, batch_norm in zip(
+            range(self.layers), self.masks_layer,
+            process_layer_param(self.batch_norm, self.layers)
+        ):
             if isinstance(self.linear_layers[k], Linear):
-                if self.batch_norm[k]:
+                if batch_norm:
                     self.batch_norm_layers[k] = BatchNorm1d(
                         self.capacity[k] + 1
                     )
-                self.linear_layers[k].weight = Parameter(  # type: ignore
-                    torchdefault.tensor(weights[k], requires_grad=True)
-                    * self.masks[k].to(
-                        device=torch.get_default_device(),
-                        dtype=torch.get_default_dtype()
+                if mask is not None:
+                    self.linear_layers[k].weight = Parameter(  # type: ignore
+                        torchdefault.tensor(weights[k], requires_grad=True)
+                        * mask.to(
+                            device=torch.get_default_device(),
+                            dtype=torch.get_default_dtype()
+                        )
                     )
-                )
         self.__update_masks()
 
     def get_total_parameters(self):
@@ -722,42 +384,3 @@ class LinealNN(Module):
 
     def copy(self):
         return deepcopy(self)
-
-
-class InferenceModule(Module):
-    """
-    A
-    """
-    inference_function: Callable[[Tensor], Tensor]
-
-    def __init__(self, inference_function: Callable[[Tensor], Tensor]) -> None:
-        self.inference_function = inference_function
-        super().__init__()
-
-    def forward(self, input_tensor: Tensor):
-        """
-        A
-        """
-        torchdefault.set_defaults()
-        return self.inference_function(input_tensor)
-
-
-class LossModule(Module):
-    """
-    A
-    """
-    loss_function: Callable[[Tensor, Tensor], Tensor]
-
-    def __init__(
-        self,
-        loss_function: Callable[[Tensor, Tensor], Tensor]
-    ) -> None:
-        self.loss_function = loss_function
-        super().__init__()
-
-    def forward(self, input_a: Tensor, input_b: Tensor):
-        """
-        A
-        """
-        torchdefault.set_defaults()
-        return self.loss_function(input_a, input_b)

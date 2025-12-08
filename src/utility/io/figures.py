@@ -128,9 +128,8 @@ def save_confusion_matrix_figure(
         )
     )
     cm_disp.ax_.set(
-        title=f'Matriz de confusion de {target_label.capitalize()}{
-            f", normalizado sobre {normalize}" if normalize is not None else ""
-        }',
+        title=f'Matriz de confusion de {target_label.capitalize()}'
+        f'{f", normalizado sobre {normalize}" if normalize is not None else ""}',
         xlabel=f'{target_label.capitalize()} predicho',
         ylabel=f'{target_label.capitalize()} real'
     )

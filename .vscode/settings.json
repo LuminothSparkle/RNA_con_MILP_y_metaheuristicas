@@ -1,29 +1,12 @@
 {
-    "python.analysis.typeCheckingMode": "standard",
-    "python.testing.pytestEnabled": true,
-    "python.testing.unittestEnabled": true,
-    "python.useEnvironmentsExtension": true,
-    "debugpy.showPythonInlineValues": true,
-    "terminal.integrated.env.windows": {
-        "PYTHONPATH": "${workspaceFolder}/src;${workspaceFolder}"
-    },
-    "files.associations": {
-        "ranges": "cpp",
-        "format": "cpp",
-        "cmath": "cpp",
-        "bitset": "cpp",
-        "set": "cpp",
-        "optional": "cpp",
-        "xstring": "cpp",
-        "iosfwd": "cpp",
-        "xutility": "cpp",
-        "array": "cpp",
-        "vector": "cpp",
-        "chrono": "cpp",
-        "system_error": "cpp",
-        "typeindex": "cpp",
-        "xlocale": "cpp",
-        "xmemory": "cpp",
-        "utility": "cpp"
-    }
+    "python.experiments.enabled": false,
+    "python.terminal.activateEnvInCurrentTerminal": true,
+    "python.analysis.autoImportCompletions": true,
+    "python.analysis.importFormat": "relative",
+    "python.terminal.useEnvFile": true,
+    "pylint.importStrategy": "fromEnvironment",
+    "pylint.cwd": "${workspaceFolder}/src",
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}/src"
+    ],
 }

@@ -3,12 +3,8 @@ A
 """
 from concurrent.futures import ThreadPoolExecutor
 import numpy
-import torch
-import numpy.random as numpyrand
 from numpy import ndarray
-from numpy.random import SeedSequence, PCG64, Generator
 from torch import Tensor
-from torch.utils.data import Subset, DataLoader
 from utility.nn.lineal import LinealNN
 from utility.metaheuristics.nnred import get_capacity
 from utility.nn.trainer import TrainerNN
@@ -28,7 +24,6 @@ class WeightFitnessCalculator:
     """
     A
     """
-    dataset: CsvDataset
     trainer: TrainerNN
     base_model: LinealNN
     best_loss: float | None
@@ -99,7 +94,7 @@ class WeightFitnessCalculator:
             'weights': weights,
             'arch': arch
         }
-        
+
     def evaluate(self, weights: list[ndarray | None]):
         result = self.get_best_arch(weights=weights)
         return result['loss'], result['weights']

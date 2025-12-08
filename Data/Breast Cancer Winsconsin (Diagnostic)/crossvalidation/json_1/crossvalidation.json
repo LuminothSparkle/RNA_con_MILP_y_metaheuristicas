@@ -1,7 +1,6 @@
 {
     "seed" : 42,
     "iterations" : 5,
-    "train_batches" : 100,
     "crossvalidator" : {
         "tuple" : [
             "RepeatedStratifiedKFold", [],

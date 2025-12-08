@@ -1,5 +1,10 @@
 {
     "version": "2.0.0",
+    "options": {
+        "env": {
+            "PYTHONPATH": "${workspaceFolder}/src"
+        },
+    },
     "tasks": [
         {
             "args": [
@@ -28,7 +33,7 @@
                 "${workspaceFolder}/src/kardex/generator.py",
                 "-sp",
                 "${workspaceFolder}/Data/kardex",
-                "-lp",
+                "-lp", 
                 "${workspaceFolder}/Data/kardex",
             ],
             "type": "shell",
@@ -40,21 +45,41 @@
                 "panel": "new",
                 "focus": true
             }
-        },
-        {
-            "label": "Regenerate neural networks for Kardex",
+        },{
+            
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "focus": true,
+                "clear": true,
+            },
+            "label": "Regenerate cv for kardex",
             "command": "python",
             "args": [
                 "${workspaceFolder}/src/trainers/kardex.py",
-                "--gen_data",
                 "--save_path",
-                "${workspaceFolder}/Data/kardex",
+                "${workspaceFolder}/Data/kardex/results/json_3",
                 "--load_path",
-                "${workspaceFolder}/Data/kardex",
-                "--arch_path",
-                "${workspaceFolder}/Data/kardex/crossvalidation/arch_1.json",
-                "--cv_path",
-                "${workspaceFolder}/Data/kardex/crossvalidation/cv_1.json",
+                "${workspaceFolder}/Data/kardex/crossvalidation/json_3/",
+                "--data_path",
+                "${workspaceFolder}/Data/kardex/",
+
+            ],
+            "type": "shell",
+            "group": {
+                "kind": "build",
+            },
+        },
+        {
+            "label": "Continue cv for kardex",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/trainers/bcw.py",
+                "--save_path",
+                "${workspaceFolder}/Data/kardex/results/json_3",
+                "--load_path",
+                "${workspaceFolder}/Data/kardex/results/json_3",
+                "--load"
             ],
             "type": "shell",
             "group": {
@@ -67,24 +92,26 @@
             }
         },
         {
+            
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "focus": true,
+                "clear": true,
+            },
             "label": "Regenerate cv for Breast Cancer",
             "command": "python",
             "args": [
                 "${workspaceFolder}/src/trainers/bcw.py",
                 "--save_path",
-                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/json_1",
                 "--load_path",
-                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/crossvalidation/json_1/"
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/crossvalidation/json_1/",
             ],
             "type": "shell",
             "group": {
                 "kind": "build",
             },
-            "presentation": {
-                "reveal": "always",
-                "panel": "new",
-                "focus": true
-            }
         },
         {
             "label": "Continue cv for Breast Cancer",
@@ -92,9 +119,9 @@
             "args": [
                 "${workspaceFolder}/src/trainers/bcw.py",
                 "--save_path",
-                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/json_2",
                 "--load_path",
-                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/json_2",
                 "--load"
             ],
             "type": "shell",

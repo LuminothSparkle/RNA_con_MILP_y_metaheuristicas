@@ -28,14 +28,18 @@ class CrossvalidationNN:
     batch_size: int
     dataset: CsvDataset
     interrupted: bool
-    
+
     def state_dict(self):
-        state_dict = deepcopy(self.__dict__)
+        state_dict = {
+            label: self.__dict__[label]
+            for label in self.__dict__
+            if label not in ['trainers', 'base_model', 'dataset']
+        }
         state_dict['trainers']   = [trainer.state_dict() for trainer in self.trainers]
-        state_dict['base_model'] = self.base_model.state_dict()
+        state_dict['base_model'] = self.base_model.state_dict(keep_vars=True)
         state_dict['dataset']    = self.dataset.state_dict()
         return state_dict
-    
+
     def load_state_dict(self, state_dict: dict):
         new_state_dict = deepcopy(state_dict)
         trainers = [ TrainerNN() for _ in range(len(new_state_dict['trainers']))]
@@ -49,7 +53,7 @@ class CrossvalidationNN:
             state_dict=state_dict['dataset']
         )
         self.__dict__ = new_state_dict
-    
+
     @classmethod
     def from_dataset(
         cls, dataset: CsvDataset, crossvalidator: BaseCrossValidator,
@@ -59,6 +63,11 @@ class CrossvalidationNN:
         scheculer: type[LRScheduler] | None = None,
         optimizer_kwargs: dict | None = None,
         scheduler_kwargs: dict | None = None,
+        connection_drouput = None,
+        l1_activation =  None,
+        l2_activation =  None,
+        l1_weight =  None,
+        l2_weight =  None,
         workers: int | None = None, seed: int | None = None
     ):
         cvnn = cls()
@@ -90,12 +99,18 @@ class CrossvalidationNN:
             tensors_data['test_targets']   = torchdefault.tensor(test_tgt)
             cvnn.trainers += [TrainerNN.from_model(
                 model=cvnn.base_model.copy(),
+                dataset=dataset,
                 optimizer=cvnn.optimizer,
                 scheduler=cvnn.scheduler,
                 scheduler_kwargs=cvnn.scheduler_kwargs,
                 optimizer_kwargs=cvnn.optimizer_kwargs,
                 epochs=cvnn.epochs,
                 batch_size=cvnn.batch_size,
+                connection_dropout=connection_drouput,
+                l1_activation=l1_activation,
+                l2_activation=l2_activation,
+                l1_weight=l1_weight,
+                l2_weight=l2_weight,
                 seed=seed
             )]
         return cvnn

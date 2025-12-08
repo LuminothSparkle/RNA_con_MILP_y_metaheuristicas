@@ -2,11 +2,15 @@ from os import PathLike
 from typing import IO
 import torch
 from torch.utils.data import TensorDataset, DataLoader, Dataset
+from torch.optim import Adam, AdamW
+from torch.optim.lr_scheduler import CyclicLR
+
 
 def set_defaults():
     """
     A
     """
+    torch.serialization.add_safe_globals([Adam, AdamW, CyclicLR])
     torch.set_default_device('cpu')
     torch.set_default_dtype(torch.double)
     if torch.cuda.is_available():
@@ -38,7 +42,8 @@ def save(state_dict: dict, f: str | PathLike[str] | IO[bytes], **kwargs):
     torch.save(state_dict, f, **kwargs)
     
 def load(f: str | PathLike[str] | IO[bytes], **kwargs):
-    return torch.load(f, map_location=torch.get_default_device(), weights_only=True, **kwargs)
+    set_defaults()
+    return torch.load(f, mmap=True, map_location=torch.get_default_device(), weights_only=True, **kwargs)
 
 def sequential_dataloader(dataset: Dataset, **kwargs):
     return DataLoader(dataset=dataset, batch_size=None, **kwargs)

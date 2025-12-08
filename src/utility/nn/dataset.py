@@ -1,27 +1,21 @@
 """
 A
 """
-from json import encoder, decoder
-from concurrent.futures import ThreadPoolExecutor
-from copy import deepcopy
-from typing import Any, Callable
-from abc import abstractmethod
 from itertools import accumulate
-from collections.abc import Iterable, Generator
-from time import perf_counter_ns
-from matplotlib.pylab import PCG64, SeedSequence
 import numpy
 import numpy.random as numpyrand
-from numpy import array, ndarray, uint64
+from numpy import ndarray
 import pandas
 from pandas import DataFrame
 from sklearn.model_selection import BaseCrossValidator, train_test_split
-from sklearn.preprocessing import MaxAbsScaler, MinMaxScaler, StandardScaler, LabelBinarizer, OrdinalEncoder
+from sklearn.preprocessing import (
+    MaxAbsScaler, MinMaxScaler, StandardScaler, LabelBinarizer, OrdinalEncoder
+)
 import torch
 from torch.nn.functional import binary_cross_entropy_with_logits, mse_loss, cross_entropy
 from torch import Tensor
-from torch.utils.data import Dataset
-from .torchdefault import set_defaults
+from utility.nn import torchdefault
+
 
 def noise_tensor_augment(
     tensor_dict: dict[str, ndarray],
@@ -38,7 +32,7 @@ def noise_tensor_augment(
     augment_samples = generator.integers(0, len(tensor_dict['pandas index']), data_augment)
     augmented_dict = {label: [] for label in tensor_dict}
     for i, sample in enumerate(augment_samples):
-        augmented_dict['pandas index'] += [f'aug_{i}_{tensor_dict['pandas index'][sample, :]}']
+        augmented_dict['pandas index'] += [f'aug_{i}_{tensor_dict["pandas index"][sample, :]}']
         for label in labels['ordinal features']:
             tensor_array = tensor_dict[label][sample, :]
             augmented_dict[label] += [tensor_array - 0.5 + generator.random(tensor_array.shape)]
@@ -364,7 +358,7 @@ class CsvDataset:
         Function de perdida general para los tensores, considerando
         casos de clases y regresion
         """
-        set_defaults()
+        torchdefault.set_defaults()
         target_sizes = self.get_tensor_sizes(label_type='targets')
         return torch.concat(
             [
@@ -390,7 +384,7 @@ class CsvDataset:
         Function de perdida general para los tensores, considerando
         casos de clases y regresion
         """
-        set_defaults()
+        torchdefault.set_defaults()
         target_sizes = self.get_tensor_sizes(label_type='targets')
         loss = torch.tensor(0.0, dtype=torch.get_default_dtype(), device=torch.get_default_device())
         for label, pred_splitted, target_splitted in zip(

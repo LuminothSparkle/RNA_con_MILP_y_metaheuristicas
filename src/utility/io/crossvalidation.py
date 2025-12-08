@@ -60,14 +60,14 @@ def save_crossvalidation_data(crossvalidation: CrossvalidationNN, dir_path: Path
         for trainer in crossvalidation.trainers
         if trainer.states['fit']['loss'] is not None
     ]
-    sorted = numpy.argsort(losses)
+    sorted_losses = numpy.argsort(losses)
     total_time = numpy.sum([trainer.train_time for trainer in crossvalidation.trainers])
     prediction_dfs = []
     classes_dfs = []
     class_stats = []
     regression_stats = []
     cm_dfs = []
-    for trainer in [trainers[i] for i in sorted]:
+    for trainer in [trainers[i] for i in sorted_losses]:
         dfs = prediction_dataframes(model=trainer.model, dataset=crossvalidation.dataset)
         prediction_dfs += [dfs['prediction']]
         classes_dfs += [dfs['classes']]
@@ -98,7 +98,7 @@ def save_crossvalidation_data(crossvalidation: CrossvalidationNN, dir_path: Path
     tensor_data['sizes'] = crossvalidation.dataset.get_tensor_sizes('all')
     tensor_dataframe = DataFrame(tensor_data)
     trainers = []
-    for i in sorted:
+    for i in sorted_losses:
         validation_data = numpy.concat(
             crossvalidation.dataset.generate_tensors(dataframe=crossvalidation.dataset.validation_dataframe),
             axis=1
@@ -151,7 +151,7 @@ def save_crossvalidation_data(crossvalidation: CrossvalidationNN, dir_path: Path
     for label in crossvalidation.dataset.labels['regression targets']:
         regression_dfs[label].to_csv(path_or_buf=regression_dir_path / f'{label}_stats.csv', index=False)
     for i in [-1, 0]:
-        model_dir_path = dir_path / f'model {(i + len(sorted)) % len(sorted)}'
+        model_dir_path = dir_path / f'model {(i + len(sorted_losses)) % len(sorted_losses)}'
         save_tensor_dataset(
             tensor_df=tensor_dataframe,
             dataset_df=dataframes[i],
