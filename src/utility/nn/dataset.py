@@ -262,7 +262,9 @@ class CsvDataset:
                 tensor_dict[label] = dataframe.loc[:, label].to_numpy().reshape(
                     len(dataframe), -1
                 )
-        tensor_dict['pandas index'] = dataframe.index.to_numpy()
+        tensor_dict['pandas index'] = dataframe.index.to_numpy().reshape(
+            len(dataframe), -1
+        )
         if augment_tensor:
             tensor_dict = noise_tensor_augment(
                 tensor_dict=tensor_dict, labels=self.labels, encoder=self.encoder,

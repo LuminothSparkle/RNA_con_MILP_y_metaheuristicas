@@ -71,6 +71,38 @@ def mcnemar_test(a_over_b: int, b_over_a: int):
         (abs(a_over_b - b_over_a) - 1) ** 2 / (a_over_b + b_over_a)
     )
 
+def compare_archs(model_a: LinealNN, model_b: LinealNN, dataset: CsvDataset):
+    stats = {}
+    prediction_a = prediction_dataframes(model=model_a, dataset=dataset)
+    prediction_b = prediction_dataframes(model=model_b, dataset=dataset)
+    stats_a = stats_dataframes(
+        prediction_dataframe=prediction_a['prediction'],
+        classes_dataframe=prediction_a['classes'],
+        class_labels=dataset.labels['class targets'],
+        regression_labels=dataset.labels['regression targets']
+    )
+    stats_b = stats_dataframes(
+        prediction_dataframe=prediction_b['prediction'],
+        classes_dataframe=prediction_b['classes'],
+        class_labels=dataset.labels['class targets'],
+        regression_labels=dataset.labels['regression targets']
+    )
+    stats['class']      = compare_dataframes(stats_b['class'], stats_a['class'])
+    stats['regression'] = compare_dataframes(stats_b['regression'], stats_a['regression'])
+    for label in dataset.labels['class targets']:
+        a_right = (
+            prediction_a['prediction'][:, f'{label} target labels'] ==
+            prediction_a['prediction'][:, f'{label} predicted labels']
+        ).to_numpy().ravel()
+        b_right = (
+            prediction_b['prediction'][:, f'{label} target labels'] ==
+            prediction_b['prediction'][:, f'{label} predicted labels']
+        ).to_numpy().ravel()
+        a_over_b = numpy.logical_and(a_right, numpy.logical_not(b_right))
+        b_over_a = numpy.logical_and(b_right, numpy.logical_not(a_right))
+        stats['class'][label, 'mcnemar'] = mcnemar_test(a_over_b=a_over_b, b_over_a=b_over_a)
+    return stats
+
 def prediction_dataframes(
     model: LinealNN, dataset: CsvDataset
 ):
