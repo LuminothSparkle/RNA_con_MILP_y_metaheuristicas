@@ -13,9 +13,11 @@ from sklearn.metrics import (
     d2_absolute_error_score, matthews_corrcoef, f1_score,
     log_loss, explained_variance_score, confusion_matrix
 )
+from statsmodels.stats.contingency_tables import mcnemar
 from utility.nn.lineal import LinealNN
 from utility.nn.dataset import CsvDataset
 import utility.nn.torchdefault as torchdefault
+
 
 
 class_metrics_labels = [
@@ -47,30 +49,6 @@ def weight_comparation(
         stats += [(numpy.mean(diff), numpy.std(diff))]
     return stats
 
-
-def binomial_test(
-    a_over_b: int, b_over_a: int,
-    expected_mean: float
-):
-    """
-    A
-    """
-    total_difs = a_over_b + b_over_a
-    return numpy.sum([
-        scipy.special.comb(total_difs, t, exact=True)
-        * (expected_mean) ** (t) * (1 - expected_mean) ** (total_difs - t)
-        for t in range(a_over_b, total_difs + 1)
-    ])
-
-
-def mcnemar_test(a_over_b: int, b_over_a: int):
-    """
-    A
-    """
-    return (
-        (abs(a_over_b - b_over_a) - 1) ** 2 / (a_over_b + b_over_a)
-    )
-
 def compare_archs(model_a: LinealNN, model_b: LinealNN, dataset: CsvDataset):
     stats = {}
     prediction_a = prediction_dataframes(model=model_a, dataset=dataset)
@@ -100,7 +78,15 @@ def compare_archs(model_a: LinealNN, model_b: LinealNN, dataset: CsvDataset):
         ).to_numpy().ravel()
         a_over_b = numpy.logical_and(a_right, numpy.logical_not(b_right))
         b_over_a = numpy.logical_and(b_right, numpy.logical_not(a_right))
-        stats['class'][label, 'mcnemar'] = mcnemar_test(a_over_b=a_over_b, b_over_a=b_over_a)
+        ab_wrong = numpy.logical_and(numpy.logical_not(a_right), numpy.logical_not(b_right))
+        ab_right = numpy.logical_and(b_right, a_right)
+        bunch = mcnemar(
+            table=[[ab_right, a_over_b], [b_over_a, ab_wrong]],
+            exact=True,
+            correction=True
+        )
+        stats['class'][label, 'mcnemar p'] = bunch.p
+        stats['class'][label, 'mcnemar statistic'] = bunch.statistic
     return stats
 
 def prediction_dataframes(
