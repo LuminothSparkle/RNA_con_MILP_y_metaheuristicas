@@ -1,11 +1,10 @@
 """
 A
 """
-from concurrent.futures import ThreadPoolExecutor
 from numpy import ndarray
-import numpy
 import numpy.random as numpyrand
 from numpy.random import Generator, SeedSequence, PCG64
+from .nnred import get_capacity
 from utility.nn.trainer import TrainerNN
 from utility.nn.dataset import CsvDataset
 from utility.metaheuristics.fitness import WeightFitnessCalculator
@@ -17,11 +16,17 @@ def hill_climb(
     dataset: CsvDataset,
     trainer: TrainerNN,
     p: float = 0.5,
-    seed: int | Generator | None = None
+    seed: int | Generator | None = None,
+    iterations: int | None = None,
+    tolerance: float | None = None
 ):
     """
     A
     """
+    if tolerance is None:
+        tolerance = 0.05
+    if iterations is None:
+        iterations = 10
     if isinstance(seed, Generator):
         generator = seed
     else:
@@ -30,28 +35,27 @@ def hill_climb(
             seeder = SeedSequence(seed)
         generator = numpyrand.default_rng(PCG64(seeder))
     fittner = WeightFitnessCalculator(
-        arch=trainer.model,trainer=trainer,
+        arch=trainer.model, trainer=trainer,
         dataset=dataset
     )
     best_fitness, best_weights = fittner.evaluate(weights)
-    while True:
-        neighbors = get_neighbors(weights, p, generator)
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            futures_list = []
-            for neighbor in neighbors:
-                futures_list += [executor.submit(
-                    fittner.evaluate,
-                    weights=neighbor
-                )]
-            neighbors = []
-            fitnesses = []
-            for future_data in futures_list:
-                fitness, neighbor = future_data.result()
-                fitnesses += [fitness]
-                neighbors += [neighbor]
-        max_i = numpy.argmax(fitnesses)
-        if best_fitness > fitnesses[max_i]:
+    init_fitness = best_fitness
+    for iteration in range(iterations):
+        print(f"iteracion {iteration}")
+        print(f"Solución actual {get_capacity(best_weights)[1:-1]}")
+        print(f"Fitness {best_fitness}")
+        neighbors = get_neighbors(best_weights, p, generator)
+        fitnesses = []
+        new_neighbors = []
+        for i, neighbor in enumerate(neighbors):
+            print(f"Evaluando vecino {get_capacity(neighbor)[1:-1]}")
+            fitness, new_neighbor = fittner.evaluate(neighbor)
+            fitnesses += [(fitness, i)]
+            print(f"Fitness {fitness}")
+            new_neighbors += [new_neighbor]
+        sorted_fitness = sorted(fitnesses)
+        if init_fitness > sorted_fitness[-1][0] * (1 +  tolerance):
             break
-        best_fitness = fitnesses[max_i]
-        best_weights = neighbors[max_i]
+        best_fitness = sorted_fitness[-1][0]
+        best_weights = new_neighbors[sorted_fitness[-1][1]]
     return best_weights

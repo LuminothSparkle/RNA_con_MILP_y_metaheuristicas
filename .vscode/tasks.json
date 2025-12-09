@@ -92,6 +92,88 @@
             }
         },
         {
+            "label": "Launch genetic for kardex",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/metaheuristics/genetic.py",
+                "--save_path",
+                "${workspaceFolder}/Data/kardex/results/json_3/metaheuristics/genetic",
+                "--load_path",
+                "${workspaceFolder}/Data/kardex/results/json_3/fisica 4_16/model 0",
+                "--load"
+            ],
+            "type": "shell",
+            "group": {
+                "kind": "build",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true
+            }
+        },
+        {
+            "label": "Launch hill_climb for kardex",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/metaheuristics/hill_climb.py",
+                "--save_path",
+                "${workspaceFolder}/Data/kardex/results/json_3/metaheuristics/hill_climb",
+                "--load_path",
+                "${workspaceFolder}/Data/kardex/results/json_3/fisica 4_16/model 0",
+                "--load"
+            ],
+            "type": "shell",
+            "group": {
+                "kind": "build",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true
+            }
+        },
+        {
+            "label": "Generate stats base",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/files/trainer.py",
+                "--save_path",
+                "${workspaceFolder}/Data/kardex/results/json_3/metaheuristics/original.csv",
+                "--load_path",
+                "${workspaceFolder}/Data/kardex/results/json_3/computacion 122_9/model 0"
+            ],
+            "type": "shell",
+            "group": {
+                "kind": "build",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true
+            }
+        },
+        {
+            "label": "Generate stats optimized",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/files/trainer.py",
+                "--save_path",
+                "${workspaceFolder}/Data/kardex/results/json_3/metaheuristics/optimized.csv",
+                "--load_path",
+                "${workspaceFolder}/Data/kardex/results/json_3/metaheuristics"
+            ],
+            "type": "shell",
+            "group": {
+                "kind": "build",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true
+            }
+        },
+        {
             
             "presentation": {
                 "reveal": "always",

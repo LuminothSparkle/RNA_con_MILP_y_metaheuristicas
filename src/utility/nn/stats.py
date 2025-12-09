@@ -5,7 +5,6 @@ from itertools import accumulate
 import numpy
 from pandas import DataFrame
 import pandas
-import scipy
 from sklearn.metrics import (
     accuracy_score, mean_absolute_percentage_error, mean_absolute_error,
     recall_score, roc_auc_score, precision_score, average_precision_score,
@@ -17,6 +16,7 @@ from statsmodels.stats.contingency_tables import mcnemar
 from utility.nn.lineal import LinealNN
 from utility.nn.dataset import CsvDataset
 import utility.nn.torchdefault as torchdefault
+from .trainer import TrainerNN
 
 
 
@@ -69,25 +69,30 @@ def compare_archs(model_a: LinealNN, model_b: LinealNN, dataset: CsvDataset):
     stats['regression'] = compare_dataframes(stats_b['regression'], stats_a['regression'])
     for label in dataset.labels['class targets']:
         a_right = (
-            prediction_a['prediction'][:, f'{label} target labels'] ==
-            prediction_a['prediction'][:, f'{label} predicted labels']
+            prediction_a['prediction'].loc[:, f'{label} target labels'] ==
+            prediction_a['prediction'].loc[:, f'{label} predicted labels']
         ).to_numpy().ravel()
         b_right = (
-            prediction_b['prediction'][:, f'{label} target labels'] ==
-            prediction_b['prediction'][:, f'{label} predicted labels']
+            prediction_b['prediction'].loc[:, f'{label} target labels'] ==
+            prediction_b['prediction'].loc[:, f'{label} predicted labels']
         ).to_numpy().ravel()
-        a_over_b = numpy.logical_and(a_right, numpy.logical_not(b_right))
-        b_over_a = numpy.logical_and(b_right, numpy.logical_not(a_right))
-        ab_wrong = numpy.logical_and(numpy.logical_not(a_right), numpy.logical_not(b_right))
-        ab_right = numpy.logical_and(b_right, a_right)
+        a_over_b = numpy.logical_and(a_right, numpy.logical_not(b_right)).sum().item()
+        b_over_a = numpy.logical_and(b_right, numpy.logical_not(a_right)).sum().item()
+        ab_wrong = numpy.logical_and(numpy.logical_not(a_right), numpy.logical_not(b_right)).sum().item()
+        ab_right = numpy.logical_and(b_right, a_right).sum().item()
         bunch = mcnemar(
             table=[[ab_right, a_over_b], [b_over_a, ab_wrong]],
             exact=True,
             correction=True
         )
-        stats['class'][label, 'mcnemar p'] = bunch.p
-        stats['class'][label, 'mcnemar statistic'] = bunch.statistic
-    return stats
+        stats['class'].loc[label, 'mcnemar pvalue']    = bunch.pvalue
+        stats['class'].loc[label, 'mcnemar statistic'] = bunch.statistic
+    
+    return {
+        'comparative': stats,
+        'first': stats_a,
+        'second': stats_b
+    }
 
 def prediction_dataframes(
     model: LinealNN, dataset: CsvDataset
@@ -346,6 +351,68 @@ def confusion_matrix_dataframes(
         )
     return data_dict
 
+
+def comparative_dataframe(trainers: list[TrainerNN], labels: list[str]):
+    df_dict = {
+        stat: {} for stat in [
+            'train_time',
+            'parameters',
+            'connections',
+            'layers',
+            'capacity',
+            'activation',
+            'dropout',
+            'batch_norm',
+            'learnable_layers',
+            'weights_initializers',
+            'bias',
+            'masks',
+            'optimizer',
+            'scheduler',
+            'batch_size',
+            'epochs',
+            'overfit_tolerance',
+            'epochs',
+            'fit_loss',
+            'overfit_loss',
+            'last_loss',
+            'start_loss',
+            'connection dropout',
+            'l1_activation',
+            'l2_activation',
+            'l1_weight',
+            'l2_weight'
+        ]
+    }
+    for label, trainer in zip(labels, trainers):
+        df_dict['train_time'][label]  = trainer.train_time
+        df_dict['parameters'][label]  = trainer.model.get_total_parameters()
+        df_dict['connections'][label] = trainer.model.get_total_connections()
+        df_dict['layers'][label]    = str(trainer.model.layers)
+        df_dict['capacity'][label]    = str(trainer.model.capacity)
+        df_dict['activation'][label]  = str(trainer.model.activation)
+        df_dict['dropout'][label]     = str(trainer.model.dropout)
+        df_dict['batch_norm'][label]  = str(trainer.model.batch_norm)
+        df_dict['learnable_layers'][label]  = str(trainer.model.learnable_layers)
+        df_dict['weights_initializers'][label]  = str(trainer.model.weights_initializers)
+        df_dict['bias'][label]  = str(trainer.model.bias)
+        df_dict['masks'][label]  = str(trainer.model.masks)
+        df_dict['optimizer'][label]  = str(trainer.optimizer)
+        df_dict['scheduler'][label]  = str(trainer.scheduler)
+        df_dict['batch_size'][label]  = str(trainer.batch_size)
+        df_dict['epochs'][label]  = str(trainer.epochs)
+        df_dict['overfit_tolerance']  = str(trainer.overfit_tolerance)
+        df_dict['epochs'][label]  = str(trainer.epochs)
+        df_dict['fit_loss'][label]  = str(trainer.states['fit']['loss'])
+        df_dict['overfit_loss'][label]  = str(trainer.states['overfit']['loss'])
+        df_dict['last_loss'][label]  = str(trainer.states['last']['loss'])
+        df_dict['start_loss'][label]  = str(trainer.start_loss)
+        df_dict['connection dropout'][label]  = str(trainer.connection_dropout)
+        df_dict['l1_activation'][label]  = str(trainer.l1_activation)
+        df_dict['l2_activation'][label]  = str(trainer.l2_activation)
+        df_dict['l1_weight'][label]  = str(trainer.l1_weight)
+        df_dict['l2_weight'][label]  = str(trainer.l2_weight)
+    return DataFrame(df_dict)
 
 def generate_percetages(data: DataFrame):
     """

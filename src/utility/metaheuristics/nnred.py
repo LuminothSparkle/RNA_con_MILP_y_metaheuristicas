@@ -16,7 +16,7 @@ def remove_neuron(
     """
     assert hidden_layer < len(weights) - 1
     if weights[hidden_layer] is None:
-        return weights
+        return None
     pre_w = weights[hidden_layer].T  # type: ignore
     next_layer, pos_w = next(
         (hidden_layer + 1 + i, weight.T)
@@ -24,26 +24,27 @@ def remove_neuron(
         if weight is not None
     )
     new_pre_w = pre_w[:, [
-            neuron not in hidden_neurons
-            for neuron in range(pre_w.shape[1])
-    ]]
-    pre_wv = pre_w[:, [
-        neuron in hidden_neurons
+        neuron not in hidden_neurons
         for neuron in range(pre_w.shape[1])
     ]]
-    new_pre_w[:, :] += pre_wv / new_pre_w.shape[1]
+    pre_wv = numpy.sum(a=pre_w[:, [
+        neuron in hidden_neurons
+        for neuron in range(pre_w.shape[1])
+    ]], axis=1)
+    new_pre_w[:, :] += pre_wv.reshape((-1,1)) / new_pre_w.shape[1]
     new_pos_w = pos_w[[
         neuron not in hidden_neurons
         for neuron in range(pos_w.shape[0])
     ], :]
-    pos_wv = pos_w[[
+    pos_wv = numpy.sum(a=pos_w[[
         neuron in hidden_neurons
         for neuron in range(pos_w.shape[0])
-    ], :]
-    new_pos_w[:, :] += pos_wv / new_pos_w.shape[0]
+    ], :], axis=0)
+    new_pos_w[:, :] += pos_wv.reshape((1,-1)) / new_pos_w.shape[0]
     new_weights = deepcopy(weights)
     new_weights[hidden_layer] = new_pre_w.T
     new_weights[next_layer] = new_pos_w.T
+    return new_weights
 
 
 def remove_layer(
@@ -54,20 +55,21 @@ def remove_layer(
     A
     """
     assert hidden_layer < len(weights) - 1
-    hidden_layer = hidden_layer + 1
     if weights[hidden_layer] is None:
-        return weights
-    pos_w = weights[hidden_layer].T  # type: ignore
-    next_layer, pre_w = next(
-        (hidden_layer - 1 - i, weight.T)
-        for i, weight in enumerate(weights[(hidden_layer - 1)::-1])
-        if weight is not None
+        return None
+    pre_w = weights[hidden_layer].T  # type: ignore
+    next_layer, pos_w = next(
+        ((hidden_layer + 1 + i, weight.T)
+        for i, weight in enumerate(weights[(hidden_layer + 1):])
+        if weight is not None),
+        (len(weights) - 1, None)
     )
-    new_pre_w = numpy.matmul(pre_w, pos_w)
-    new_pos_w = None
+    if pos_w is None:
+        return None
+    new_pre_w = numpy.matmul(numpy.matmul(pre_w, numpy.ones((pre_w.shape[1], pos_w.shape[0]))), pos_w)
     new_weights = deepcopy(weights)
-    new_weights[hidden_layer] = new_pos_w
-    new_weights[next_layer] = new_pre_w.T
+    new_weights[hidden_layer] = new_pre_w.T
+    new_weights[next_layer] = None
     return new_weights
 
 
@@ -83,11 +85,15 @@ def get_capacity(weights: list[ndarray | None]):
     A
     """
     return [
-        weights[0].shape[0],  # type: ignore
         *(
-            weight.shape[1]
+            weight.shape[1] - 1
             if weight is not None
-            else 0
+            else None
             for weight in weights
+        ),
+        next(
+            weight.shape[0]
+            for weight in reversed(weights)
+            if weight is not None
         )
     ]

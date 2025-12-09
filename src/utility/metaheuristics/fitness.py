@@ -59,11 +59,11 @@ class WeightFitnessCalculator:
             dataset=test_dataset
         )
         losses = [
-            arch.loss(features=features, target=targets)
+            self.dataset.loss_fn(pred=arch(features), target=targets).cpu().detach().item()
             for features, targets in dataloader
         ]
         loss = numpy.mean(losses).item()
-        if self.best_loss is None or self.best_loss > loss:
+        if self.best_loss is None or self.best_loss >= loss:
             self.best_loss = loss
             return {
                 'loss': loss_fitness(loss),
@@ -145,9 +145,9 @@ class MaskFitnessCalculator:
             future_list = []
             for arch in self.active_archs:
                 weights = arch.get_weights()
-                masks = [mask.view_as(weight) for mask, weight in zip(
+                masks = [mask.view_as(torchdefault.tensor(weight)) for mask, weight in zip(
                     chromosome.split_with_sizes([
-                        weight.numel()
+                        weight.size
                         for weight in weights
                     ]),
                     weights
@@ -160,7 +160,7 @@ class MaskFitnessCalculator:
                 future_data.result()
                 for future_data in future_list
             ]
-            
+
             def test_closure(model: LinealNN):
                 test_dataset = torchdefault.tensor_dataset(
                     *self.dataset.generate_tensors(
@@ -172,11 +172,11 @@ class MaskFitnessCalculator:
                     dataset=test_dataset
                 )
                 losses = [
-                    model.loss(features=features, target=targets)
+                    self.dataset.loss_fn(pred=model(features), target=targets).cpu().detach().item()
                     for features, targets in dataloader
                 ]
                 return numpy.mean(losses).item()
-            
+
             def trainer_closure(model: LinealNN):
                 test_dataset = torchdefault.tensor_dataset(
                     *self.dataset.generate_tensors(
@@ -197,7 +197,7 @@ class MaskFitnessCalculator:
                     test_dataset=test_dataset
                 )
                 return trainer
-            
+
             future_list = []
             for model in new_archs:
                 future_list += [executor.submit(
@@ -206,7 +206,7 @@ class MaskFitnessCalculator:
                 )]
             losses = [future.result() for future in future_list]
             min_i = numpy.argmin(losses)
-            if self.best_loss is None or self.best_loss > losses[min_i]:
+            if self.best_loss is None or self.best_loss >= losses[min_i]:
                 self.best_loss = losses[min_i]
                 return {
                     'arch': new_archs[min_i], 
