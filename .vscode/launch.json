@@ -1,0 +1,90 @@
+{
+  "version": "0.2.0",
+  "compounds": [
+    {
+      "name": "Compound",
+      "configurations": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "jsonName",
+      "type": "promptString",
+      "description": "",
+      "default": "json_1"
+    }
+  ],
+  "configurations": [
+    {
+      "name": "Python Debugger: Generate Kardex database",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "python",
+      "console": "integratedTerminal",
+      "args": [
+          "${workspaceFolder}/src/kardex/generator.py",
+      ],
+      "envFile": "${workspaceFolder}/.env",
+      "consoleName": "Python Kardex Database Debug Console",
+    },
+    {
+      "name": "Python Debugger: Generate Kardex",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "python",
+      "console": "integratedTerminal",
+      "args": [
+          "${workspaceFolder}/src/trainers/kardex.py",
+          "--save_path",
+          "${workspaceFolder}/Data/kardex/results/${inputs:jsonName}",
+          "--load_path",
+          "${workspaceFolder}/Data/kardex/crossvalidation/${inputs:jsonName}/",
+          "--data_path",
+          "${workspaceFolder}/Data/kardex/",
+      ],
+      "envFile": "${workspaceFolder}/.env",
+      "consoleName": "Python Kardex Debug Console",
+    },
+    {
+      "name": "Python Debugger: Generate bcw",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "python",
+      "console": "integratedTerminal",
+      "args": [
+          "${workspaceFolder}/src/trainers/bcw.py",
+          "--save_path",
+          "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/${inputs:jsonName}",
+          "--load_path",
+          "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/crossvalidation/${inputs:jsonName}/",
+          "--data_path",
+          "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/",
+      ],
+      "envFile": "${workspaceFolder}/.env",
+      "consoleName": "Python bcw Debug Console",
+    },
+
+
+
+
+    {
+      "name": "C/C++ Runner: Debug Session",
+      "type": "cppdbg",
+      "request": "launch",
+      "args": [],
+      "stopAtEntry": false,
+      "externalConsole": true,
+      "cwd": "c:/Users/luisb/Documents/RNA_con_MILP_y_metaheuristicas/src/gurobi/build",
+      "program": "c:/Users/luisb/Documents/RNA_con_MILP_y_metaheuristicas/src/gurobi/build/build/Debug/outDebug",
+      "MIMode": "gdb",
+      "miDebuggerPath": "gdb",
+      "setupCommands": [
+        {
+          "description": "Enable pretty-printing for gdb",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ]
+    }
+  ]
+}

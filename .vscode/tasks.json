@@ -1,32 +1,80 @@
 {
     "version": "2.0.0",
     "options": {
-        "env": {
-            "PYTHONPATH": "${workspaceFolder}/src"
-        },
     },
+    "inputs": [
+        {
+            "id": "jsonName",
+            "default": "json_1",
+            "description": "",
+            "type": "promptString"
+        },
+    ],
     "tasks": [
         {
-            "args": [
-                "/Zi",
-                "/EHsc",
-                "/Fe:",
-                "${fileDirname}\\${fileBasenameNoExtension}.exe",
-                "/I",
-                "\"C:\\Program Files (x86)\\gurobi1202\\win64\\include\"",
-                "/L",
-                "\"C:\\Program Files (x86)\\gurobi1202\\win64\\lib\"",
-                "${file}"
-            ],
-            "command": "cl.exe",
-            "group": "build",
-            "label": "cl.exe build active file",
-            "problemMatcher": [
-                "$msCompile"
-            ],
             "type": "shell",
+            "label": "Update requirements",
+            "command": "python",
+            "args": [
+                "-m",
+                "pip",
+                "freeze",
+                ">",
+                "${workspaceFolder}/src/requirements.txt",
+            ],
+            "runOptions": {
+                "reevaluateOnRerun": true,
+                "instanceLimit": 1,
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "silent",
+                "revealProblems": "onProblem",
+                "focus": false,
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": true,
+                "group": "Requirements",
+                "close": false,
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
         },
         {
+            "type": "shell",
+            "label": "Install requirements",
+            "command": "python",
+            "args": [
+                "-m",
+                "pip",
+                "install",
+                "-r",
+                "${workspaceFolder}/src/requirements.txt",
+            ],
+            "runOptions": {
+                "reevaluateOnRerun": true,
+                "instanceLimit": 1,
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "silent",
+                "revealProblems": "onProblem",
+                "focus": false,
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": true,
+                "group": "Requirements",
+                "close": false,
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+        },
+        {
+            "type": "shell",
             "label": "Update Kardex Dataset",
             "command": "python",
             "args": [
@@ -35,6 +83,354 @@
                 "${workspaceFolder}/Data/kardex",
                 "-lp", 
                 "${workspaceFolder}/Data/kardex",
+            ],
+            "runOptions": {
+                "reevaluateOnRerun": true,
+                "instanceLimit": 1,
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "silent",
+                "revealProblems": "onProblem",
+                "focus": false,
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": true,
+                "group": "Kardex",
+                "close": false,
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+        },
+        {
+            "type": "shell",
+            "label": "Regenerate cv for kardex",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/trainers/kardex.py",
+                "--save_path",
+                "${workspaceFolder}/Data/kardex/results/${jsonName}",
+                "--load_path",
+                "${workspaceFolder}/Data/kardex/crossvalidation/${jsonName}/",
+                "--data_path",
+                "${workspaceFolder}/Data/kardex/",
+            ],
+            "runOptions": {
+                "reevaluateOnRerun": true,
+                "instanceLimit": 1,
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "silent",
+                "revealProblems": "onProblem",
+                "focus": false,
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": true,
+                "group": "Crossvalidation",
+                "close": false,
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+        },
+        {
+            "type": "shell",
+            "label": "Continue cv for kardex",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/trainers/kardex.py",
+                "--save_path",
+                "${workspaceFolder}/Data/kardex/results/${jsonName}",
+                "--load_path",
+                "${workspaceFolder}/Data/kardex/results/${jsonName}",
+                "--load"
+            ],
+            "runOptions": {
+                "reevaluateOnRerun": true,
+                "instanceLimit": 1,
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "silent",
+                "revealProblems": "onProblem",
+                "focus": false,
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": true,
+                "group": "Crossvalidation",
+                "close": false,
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+        },
+        {
+            "type": "shell",
+            "label": "Regenerate cv for Breast Cancer",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/trainers/bcw.py",
+                "--save_path",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/${jsonName}",
+                "--load_path",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/crossvalidation/${jsonName}/",
+            ],
+            "runOptions": {
+                "reevaluateOnRerun": true,
+                "instanceLimit": 1,
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "silent",
+                "revealProblems": "onProblem",
+                "focus": false,
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": true,
+                "group": "Crossvalidation",
+                "close": false,
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+        },
+        {
+            "type": "shell",
+            "label": "Continue cv for Breast Cancer",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/trainers/bcw.py",
+                "--save_path",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/${jsonName}",
+                "--load_path",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/${jsonName}",
+                "--load"
+            ],
+            "runOptions": {
+                "reevaluateOnRerun": true,
+                "instanceLimit": 1,
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "silent",
+                "revealProblems": "onProblem",
+                "focus": false,
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": true,
+                "group": "Crossvalidation",
+                "close": false,
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+        },
+        {
+            "type": "shell",
+            "label": "Compile grb",
+            "runOptions": {
+                "reevaluateOnRerun": true,
+                "instanceLimit": 1,
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "silent",
+                "revealProblems": "onProblem",
+                "focus": false,
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": false,
+                "group": "Gurobi",
+                "close": false,
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "detail": "",
+            "windows": {
+                "command": "VsDevCmd.bat",
+                "args": [
+                    "&&", "cmake",
+                    "--fresh",
+                    "-S", "${workspaceFolder}/src/gurobi",
+                    "-B", "${workspaceFolder}/src/gurobi/build",
+                    //"-G", "Visual Studio 17 2022",
+                    //"-A", "x64",
+                    "&&", "cmake",
+                    "--build", "${workspaceFolder}/src/gurobi/build",
+                    "--clean-first",
+                    "--verbose",
+                    "--config", "Release",
+                ],
+                "options": {
+                    "shell": {
+                        "executable": "cmd.exe",
+                        "args": [
+                            "/U", "/C",
+                        ]
+                    },
+                }
+            },
+        },
+        {
+            "type": "shell",
+            "label": "Generate session",
+            "runOptions": {
+                "reevaluateOnRerun": false,
+                "instanceLimit": 1,
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "silent",
+                "revealProblems": "onProblem",
+                "focus": false,
+                "panel": "shared",
+                "showReuseMessage": false,
+                "clear": true,
+                "group": "Tunneling",
+                "close": false,
+            },
+            "group": {  
+                "kind": "none",
+                "isDefault": false,
+            },
+            "detail": "",
+            "windows": {
+                "options": {
+                    "shell": {
+                        "executable": "cmd.exe",
+                        "args": [
+                            "/U", "/C",
+                        ]
+                    },
+                },
+                "command": "dotenvx",
+                "args": [
+                    "run", "--overload", "--",
+                    "${workspaceFolder}\\src\\ssh\\ssh_session.bat"
+                ],
+            },
+            "linux": {
+                "command": "dotenvx",
+                "args": [
+                    "run", "--overload", "--",
+                    "${workspaceFolder}\\src\\ssh\\ssh_session.sh"
+                ],
+            },
+        },
+        {
+            "type": "shell",
+            "label": "Compile remote grb",
+            "command": "gcc",
+            "args": [
+                "grb_nn.cpp",
+                "-std=c++23",
+                "-lgurobi_c++",
+                "-lgurobi130",
+                "-o",
+                "grb_nn"
+            ],
+            "dependsOrder": "sequence",
+            "runOptions": {
+                "reevaluateOnRerun": true,
+                "instanceLimit": 1,
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "silent",
+                "revealProblems": "onProblem",
+                "focus": false,
+                "panel": "shared",
+                "showReuseMessage": false,
+                "clear": true,
+                "group": "Gurobi",
+                "close": false,
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": false,
+            },
+            "detail": ""
+        },
+        {
+            "type": "shell",
+            "label": "Connect and compile remote grb",
+            "dependsOrder": "sequence",
+            "dependsOn": [
+                "Generate session",
+                "Compile remote grb"
+            ],
+            "runOptions": {
+                "reevaluateOnRerun": true,
+                "instanceLimit": 1,
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "silent",
+                "revealProblems": "onProblem",
+                "focus": false,
+                "panel": "shared",
+                "showReuseMessage": false,
+                "clear": true,
+                "group": "Gurobi",
+                "close": false,
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": false,
+            },
+            "detail": ""
+        },
+        {
+            "type": "shell",
+            "label": "Run shell and compile local grb",
+            "dependsOrder": "sequence",
+            "dependsOn": [
+                "Generate msvc session",
+                "Compile local grb"
+            ],
+            "runOptions": {
+                "reevaluateOnRerun": true,
+                "instanceLimit": 1,
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "silent",
+                "revealProblems": "onProblem",
+                "focus": false,
+                "panel": "shared",
+                "showReuseMessage": false,
+                "clear": true,
+                "group": "Gurobi",
+                "close": false,
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": false,
+            },
+            "detail": ""
+        },
+
+
+
+        {
+            "label": "Launch genetic for kardex",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/metaheuristics/genetic.py",
+                "--save_path",
+                "${workspaceFolder}/Data/kardex/results/json_3/metaheuristics/genetic",
+                "--load_path",
+                "${workspaceFolder}/Data/kardex/results/json_3/fisica 4_16/model 0",
+                "--load"
             ],
             "type": "shell",
             "group": {
@@ -92,6 +488,88 @@
             }
         },
         {
+            "label": "Launch genetic for kardex",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/metaheuristics/genetic.py",
+                "--save_path",
+                "${workspaceFolder}/Data/kardex/results/json_3/metaheuristics/genetic",
+                "--load_path",
+                "${workspaceFolder}/Data/kardex/results/json_3/fisica 4_16/model 0",
+                "--load"
+            ],
+            "type": "shell",
+            "group": {
+                "kind": "build",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true
+            }
+        },
+        {
+            "label": "Launch hill_climb for kardex",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/metaheuristics/hill_climb.py",
+                "--save_path",
+                "${workspaceFolder}/Data/kardex/results/json_3/metaheuristics/hill_climb",
+                "--load_path",
+                "${workspaceFolder}/Data/kardex/results/json_3/fisica 4_16/model 0",
+                "--load"
+            ],
+            "type": "shell",
+            "group": {
+                "kind": "build",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true
+            }
+        },
+        {
+            "label": "Generate stats base",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/files/trainer.py",
+                "--save_path",
+                "${workspaceFolder}/Data/kardex/results/json_3/metaheuristics/original.csv",
+                "--load_path",
+                "${workspaceFolder}/Data/kardex/results/json_3/computacion 122_9/model 0"
+            ],
+            "type": "shell",
+            "group": {
+                "kind": "build",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true
+            }
+        },
+        {
+            "label": "Generate stats optimized",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/files/trainer.py",
+                "--save_path",
+                "${workspaceFolder}/Data/kardex/results/json_3/metaheuristics/optimized.csv",
+                "--load_path",
+                "${workspaceFolder}/Data/kardex/results/json_3/metaheuristics"
+            ],
+            "type": "shell",
+            "group": {
+                "kind": "build",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true
+            }
+        },
+        {
             
             "presentation": {
                 "reveal": "always",
@@ -123,6 +601,324 @@
                 "--load_path",
                 "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/json_2",
                 "--load"
+            ],
+            "type": "shell",
+            "group": {
+                "kind": "build",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true
+            }
+        },
+        {
+            "label": "Generate BCW Gurobi Model",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/gurobi/model.py",
+                "--gen_model",
+                "--save_path",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/gurobi",
+                "--load_path",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results",
+                "--load_name",
+                "bcw",
+                "--case_index",
+                "best",
+            ],
+            "type": "shell",
+            "group": {
+                "kind": "build",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true
+            }
+        },
+        {
+            "label": "Launch hill_climb for kardex",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/metaheuristics/hill_climb.py",
+                "--save_path",
+                "${workspaceFolder}/Data/kardex/results/json_3/metaheuristics/hill_climb",
+                "--load_path",
+                "${workspaceFolder}/Data/kardex/results/json_3/fisica 4_16/model 0",
+                "--load"
+            ],
+            "type": "shell",
+            "group": {
+                "kind": "build",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true
+            }
+        },
+        {
+            "label": "Generate stats base",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/files/trainer.py",
+                "--save_path",
+                "${workspaceFolder}/Data/kardex/results/json_3/metaheuristics/original.csv",
+                "--load_path",
+                "${workspaceFolder}/Data/kardex/results/json_3/computacion 122_9/model 0"
+            ],
+            "type": "shell",
+            "group": {
+                "kind": "build",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true
+            }
+        },
+        {
+            "label": "Generate stats Breast Cancer optimized",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/files/trainer.py",
+                "--save_path",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/${bcwJson}/metaheuristics/optimized.csv",
+                "--load_path",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/${bcwJson}/metaheuristics"
+            ],
+            "type": "shell",
+            "group": {
+                "kind": "build",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true
+            }
+        },
+        {
+            "label": "Generate stats kardex optimized",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/files/trainer.py",
+                "--save_path",
+                "${workspaceFolder}/Data/kardex/results/${kardexJson}/metaheuristics/optimized.csv",
+                "--load_path",
+                "${workspaceFolder}/Data/kardex/results/${kardexJson}/metaheuristics"
+            ],
+            "type": "shell",
+            "group": {
+                "kind": "build",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true
+            }
+        },
+        {
+            "label": "Generate BCW Gurobi Model",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/gurobi/model.py",
+                "--gen_model",
+                "--save_path",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/gurobi",
+                "--load_path",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results",
+                "--load_name",
+                "bcw",
+                "--case_index",
+                "best",
+            ],
+            "type": "shell",
+            "group": {
+                "kind": "build",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true
+            }
+        },
+        {
+            "label": "Launch hill_climb for kardex",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/metaheuristics/hill_climb.py",
+                "--save_path",
+                "${workspaceFolder}/Data/kardex/results/json_3/metaheuristics/hill_climb",
+                "--load_path",
+                "${workspaceFolder}/Data/kardex/results/json_3/fisica 4_16/model 0",
+                "--load"
+            ],
+            "type": "shell",
+            "group": {
+                "kind": "build",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true
+            }
+        },
+        {
+            "label": "Generate stats base",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/files/trainer.py",
+                "--save_path",
+                "${workspaceFolder}/Data/kardex/results/json_3/metaheuristics/original.csv",
+                "--load_path",
+                "${workspaceFolder}/Data/kardex/results/json_3/computacion 122_9/model 0"
+            ],
+            "type": "shell",
+            "group": {
+                "kind": "build",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true
+            }
+        },
+        {
+            "label": "Generate stats Breast Cancer optimized",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/files/trainer.py",
+                "--save_path",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/${bcwJson}/metaheuristics/optimized.csv",
+                "--load_path",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/${bcwJson}/metaheuristics"
+            ],
+            "type": "shell",
+            "group": {
+                "kind": "build",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true
+            }
+        },
+        {
+            "label": "Generate stats kardex optimized",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/files/trainer.py",
+                "--save_path",
+                "${workspaceFolder}/Data/kardex/results/${kardexJson}/metaheuristics/optimized.csv",
+                "--load_path",
+                "${workspaceFolder}/Data/kardex/results/${kardexJson}/metaheuristics"
+            ],
+            "type": "shell",
+            "group": {
+                "kind": "build",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true
+            }
+        },
+        {
+            "label": "Generate BCW Gurobi Model",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/gurobi/model.py",
+                "--gen_model",
+                "--save_path",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/gurobi",
+                "--load_path",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results",
+                "--load_name",
+                "bcw",
+                "--case_index",
+                "best",
+            ],
+            "type": "shell",
+            "group": {
+                "kind": "build",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true
+            }
+        },
+        {
+            "label": "Launch hill_climb for kardex",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/metaheuristics/hill_climb.py",
+                "--save_path",
+                "${workspaceFolder}/Data/kardex/results/json_3/metaheuristics/hill_climb",
+                "--load_path",
+                "${workspaceFolder}/Data/kardex/results/json_3/fisica 4_16/model 0",
+                "--load"
+            ],
+            "type": "shell",
+            "group": {
+                "kind": "build",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true
+            }
+        },
+        {
+            "label": "Generate stats base",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/files/trainer.py",
+                "--save_path",
+                "${workspaceFolder}/Data/kardex/results/json_3/metaheuristics/original.csv",
+                "--load_path",
+                "${workspaceFolder}/Data/kardex/results/json_3/computacion 122_9/model 0"
+            ],
+            "type": "shell",
+            "group": {
+                "kind": "build",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true
+            }
+        },
+        {
+            "label": "Generate stats Breast Cancer optimized",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/files/trainer.py",
+                "--save_path",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/${bcwJson}/metaheuristics/optimized.csv",
+                "--load_path",
+                "${workspaceFolder}/Data/Breast Cancer Winsconsin (Diagnostic)/results/${bcwJson}/metaheuristics"
+            ],
+            "type": "shell",
+            "group": {
+                "kind": "build",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "focus": true
+            }
+        },
+        {
+            "label": "Generate stats kardex optimized",
+            "command": "python",
+            "args": [
+                "${workspaceFolder}/src/files/trainer.py",
+                "--save_path",
+                "${workspaceFolder}/Data/kardex/results/${kardexJson}/metaheuristics/optimized.csv",
+                "--load_path",
+                "${workspaceFolder}/Data/kardex/results/${kardexJson}/metaheuristics"
             ],
             "type": "shell",
             "group": {

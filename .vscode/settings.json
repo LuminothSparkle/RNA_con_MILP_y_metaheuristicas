@@ -1,12 +1,31 @@
 {
-    "python.experiments.enabled": false,
-    "python.terminal.activateEnvInCurrentTerminal": true,
-    "python.analysis.autoImportCompletions": true,
-    "python.analysis.importFormat": "relative",
-    "python.terminal.useEnvFile": true,
-    "pylint.importStrategy": "fromEnvironment",
-    "pylint.cwd": "${workspaceFolder}/src",
-    "python.analysis.extraPaths": [
-        "${workspaceFolder}/src"
-    ],
+  "python.analysis.autoImportCompletions": true,
+  "python.terminal.useEnvFile": true,
+  "python.envFile": "${workspaceFolder}/.env",
+  "pylint.importStrategy": "fromEnvironment",
+  "pylint.cwd": "${workspaceFolder}/src",
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}/src"
+  ],
+  "python.analysis.autoFormatStrings": true,
+  "python.analysis.completeFunctionParens": true,
+  "python.analysis.diagnosticMode": "workspace",
+  "python.analysis.generateWithTypeAnnotation": true,
+  "python.analysis.include": [
+    "${workspaceFolder}/src"
+  ],
+  "python.analysis.logLevel": "Trace",
+  "python.analysis.showOnlyDirectDependenciesInAutoImport": true,
+  "python.analysis.supportDocstringTemplate": true,
+  "python.analysis.typeCheckingMode": "standard",
+  "pythonIndent.trimLinesWithOnlyWhitespace": true,
+  "autoDocstring.startOnNewLine": true,
+  "autoDocstring.includeName": true,
+  "autoDocstring.includeExtendedSummary": true,
+  "python.testing.pytestEnabled": true,
+  "python.testing.cwd": "${workspaceFolder}/src",
+  "python.createEnvironment.contentButton": "show",
+  "terminal.integrated.mouseWheelZoom": true,
+  "terminal.integrated.cursorBlinking": true,
+  "python.terminal.activateEnvironment": false,
 }
