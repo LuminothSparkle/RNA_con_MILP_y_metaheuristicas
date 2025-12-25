@@ -1,2 +1,5 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+*.vcproj        text eol=crlf
+*.bat           text eol=crlf
+*.sh            text eol=lf
