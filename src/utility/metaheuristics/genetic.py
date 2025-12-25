@@ -31,7 +31,7 @@ def uniform_crossover(
         seed = generator
         generator = torch.Generator(torch.get_default_device())
         generator.manual_seed(seed)
-    mask = torch.rand_like(chromosome_a).bernoulli(
+    mask = torch.rand_like(chromosome_a, dtype=torch.get_default_dtype()).bernoulli(
         p=p,
         generator=generator
     ).bool()
@@ -87,7 +87,7 @@ def mutation(
         generator = torch.Generator(torch.get_default_device())
         generator.manual_seed(seed)
     return chromosome.bool().bitwise_xor(
-        torch.rand_like(chromosome).bernoulli(
+        torch.rand_like(chromosome, dtype=torch.get_default_dtype()).bernoulli(
             p=p,
             generator=generator
         ).bool()
@@ -172,15 +172,9 @@ def genetic_loop(
                 )
                 for ind in tup
             ]
-            futures_list = []
-            for ind in new_poblation:
-                futures_list += [executor.submit(
-                    aptitude_function,
-                    ind
-                )]
             new_fitness = [
-                future_data.result()
-                for future_data in futures_list
+                aptitude_function(ind)
+                for ind in new_poblation
             ]
         best_i = numpy.argmin(new_fitness)
         if best['aptitude'] > new_fitness[best_i]:
@@ -235,7 +229,7 @@ def poblation_elitist_selection(
         survivor for survivor in survivor_list if survivor < len(old_fitness)
     ]
     survivor_new = [
-        survivor for survivor in survivor_list if survivor >= len(old_fitness)
+        survivor - len(old_fitness) for survivor in survivor_list if survivor >= len(old_fitness)
     ]
     return survivor_old, survivor_new
 
@@ -310,7 +304,7 @@ def poblation_rank_selection(
         survivor for survivor in survivor_list if survivor < len(old_fitness)
     ]
     survivor_new = [
-        survivor for survivor in survivor_list if survivor >= len(old_fitness)
+        survivor - len(old_fitness) for survivor in survivor_list if survivor >= len(old_fitness)
     ]
     return survivor_old, survivor_new
 
@@ -380,7 +374,7 @@ def poblation_roulette_wheel_selection(
         if survivor < len(old_fitness)
     ]
     survivor_new = [
-        survivor for survivor in survivor_list
+        survivor - len(old_fitness) for survivor in survivor_list
         if survivor >= len(old_fitness)
     ]
     return survivor_old, survivor_new

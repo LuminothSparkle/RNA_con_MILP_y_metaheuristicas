@@ -5,13 +5,29 @@ from utility.nn.trainer import TrainerNN
 
 def save_archs(trainer_a: TrainerNN, trainer_b: TrainerNN, dir_path: Path):
     dir_path.mkdir(parents=True, exist_ok=True)
-    dataframes = compare_archs(trainer_a.model, trainer_b.model)
-    dataframes['regression'].to_csv(
-        path_or_buf=dir_path / 'regression.csv',
+    dataframes = compare_archs(trainer_a.model, trainer_b.model, trainer_a.dataset)
+    dataframes['comparative']['regression'].to_csv(
+        path_or_buf=dir_path / 'comparative_regression.csv',
         index=True, header=True
     )
-    dataframes['class'].to_csv(
-        path_or_buf=dir_path / 'class.csv',
+    dataframes['comparative']['class'].to_csv(
+        path_or_buf=dir_path / 'comparative_class.csv',
+        index=True, header=True
+    )
+    dataframes['first']['regression'].to_csv(
+        path_or_buf=dir_path / 'first_regression.csv',
+        index=True, header=True
+    )
+    dataframes['first']['class'].to_csv(
+        path_or_buf=dir_path / 'first_class.csv',
+        index=True, header=True
+    )
+    dataframes['second']['regression'].to_csv(
+        path_or_buf=dir_path / 'second_regression.csv',
+        index=True, header=True
+    )
+    dataframes['second']['class'].to_csv(
+        path_or_buf=dir_path / 'second_class.csv',
         index=True, header=True
     )
     torchdefault.save(

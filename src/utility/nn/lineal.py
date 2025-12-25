@@ -12,14 +12,14 @@ from torch.nn import (
     Sequential, Module, Linear, BatchNorm1d, Dropout, ReLU, ReLU6, PReLU,
     LeakyReLU, Hardsigmoid, Hardtanh, Tanh, Sigmoid, LogSoftmax, Softmax,
     Softmin, Softplus, Mish, SiLU, ELU, GELU, CELU, RReLU, SELU, Hardswish,
-    Identity, LogSigmoid, Softsign, ModuleList, ConstantPad1d,
-    Parameter
+    Identity, LogSigmoid, Softsign, ModuleList, ConstantPad1d
 )
 from torch.nn.init import (
     xavier_normal_, xavier_uniform_, kaiming_uniform_, uniform_,
     trunc_normal_, orthogonal_, sparse_, kaiming_normal_, normal_
 )
 from torch.nn.utils import fuse_linear_bn_weights
+from utility.metaheuristics.nnred import get_capacity
 import utility.nn.torchdefault as torchdefault
 
 def gen_linear_layer(layer: int, capacity: list[int]):
@@ -36,10 +36,10 @@ def gen_linear_layer(layer: int, capacity: list[int]):
     return (
         Linear(
             capacity[layer] + 1,
-            next(cap for cap in capacity[(layer + 1):] if cap > 0),
+            next(cap for cap in capacity[(layer + 1):] if cap is not None and cap > 0),
             bias=False
         )
-        if capacity[layer] > 0
+        if capacity[layer] is not None and capacity[layer] > 0
         else Identity()
     )
 
@@ -175,52 +175,39 @@ class LinealNN(Module):
         r = super().load_state_dict(state_dict=new_state_dict, strict=strict, assign=assign)
         return r
 
-    def set_masks(
-        self,
-        masks: list[Tensor | None] | dict[int, Tensor | None] | None = None
-    ):
+    def set_masks(self, masks: list[Tensor | None] | dict[int, Tensor | None] | None = None):
         """
         A
         """
         torchdefault.set_defaults()
         self.masks = masks
-        self.masks_layer = [  # type: ignore
-            torch.ones((
-                next(
-                    cap for cap in self.capacity[(k + 1):]
-                    if cap > 0
-                ),
-                self.capacity[k] + 1
-            )).bool()
-            if mask is None
-            else mask
-            for k, mask in zip(
-                range(self.layers),
-                process_layer_param(self.masks, self.layers)
-            )
-        ]
         self.__update_masks()
 
-    def set_capacity(self, capacity: list[int]):
+    def set_capacity(self, capacity: list[int | None]):
         torchdefault.set_defaults()
         self.capacity = capacity
         self.layers = len(capacity) - 1
         self.bias_layers = ModuleList([
-            ConstantPad1d((0, 1), param)
-            if param is not None else ConstantPad1d((0, 1), 1)
-            for param in process_layer_param(self.bias, self.layers)
+            Identity() if capacity is None or capacity <= 0
+            else ConstantPad1d((0, 1), param)
+            if param is not None
+            else ConstantPad1d((0, 1), 1)
+            for param, capacity in zip(process_layer_param(self.bias, self.layers), capacity)
         ])
         self.dropout_layers = ModuleList([
-            Dropout(p=param, inplace=True)
+            Identity() if capacity is None or capacity <= 0
+            else Dropout(p=param, inplace=True)
             if param is not None else Identity()
-            for param in process_layer_param(self.dropout, self.layers)
+            for param, capacity in zip(process_layer_param(self.dropout, self.layers), capacity)
         ])
         self.batch_norm_layers = ModuleList([
-            BatchNorm1d(self.capacity[k])
+            Identity() if capacity is None or capacity <= 0
+            else BatchNorm1d(self.capacity[k])
             if param is not None and param else Identity()
-            for k, param in zip(
+            for k, param, capacity in zip(
                 range(self.layers),
-                process_layer_param(self.batch_norm, self.layers)
+                process_layer_param(self.batch_norm, self.layers),
+                capacity
             )
         ])
         self.linear_layers = ModuleList([
@@ -228,9 +215,10 @@ class LinealNN(Module):
             for k in range(self.layers)
         ])
         self.activation_layers = ModuleList([
-            self.functional_dict[param[0]](*param[1],**param[2])
+            Identity() if capacity is None or capacity <= 0
+            else self.functional_dict[param[0]](*param[1],**param[2])
             if param is not None and param else Identity()
-            for param in process_layer_param(self.activation, self.layers)
+            for param, capacity in zip(process_layer_param(self.activation, self.layers), capacity)
         ])
         self.sequential_layers = ModuleList([
             Sequential(
@@ -261,12 +249,20 @@ class LinealNN(Module):
         A
         """
         torchdefault.set_defaults()
+        self.masks_layer = [  # type: ignore
+            torch.ones_like(linear.weight).bool()
+            if mask is None and isinstance(linear, Linear)
+            else mask if isinstance(linear, Linear) and mask.shape == linear.weight.shape
+            else None
+            for linear, mask in zip(
+                self.linear_layers,
+                process_layer_param(self.masks, self.layers)
+            )
+        ]
         for mask, linear_layer in zip(self.masks_layer, self.linear_layers):
             if isinstance(linear_layer, Linear) and mask is not None:
                 linear_layer.weight.data.copy_(
-                    linear_layer.weight * mask.type_as(  # type: ignore
-                        linear_layer.weight  # type: ignore
-                    )
+                    linear_layer.weight * mask.type_as(linear_layer.weight)  # type: ignore
                 )
 
     def __update_learnable_layers(self):
@@ -322,22 +318,12 @@ class LinealNN(Module):
         que contiene los pesos de las capas lineales en una red neuronal
         """
         torchdefault.set_defaults()
-        for k, mask, batch_norm in zip(
-            range(self.layers), self.masks_layer,
-            process_layer_param(self.batch_norm, self.layers)
-        ):
+        self.start(capacity=get_capacity(weights))
+        for k, weight in [(k, weight) for k, weight in enumerate(weights) if weight is not None]:
             if isinstance(self.linear_layers[k], Linear):
-                if batch_norm:
-                    self.batch_norm_layers[k] = BatchNorm1d(
-                        self.capacity[k] + 1
-                    )
-                if mask is not None:
-                    self.linear_layers[k].weight = Parameter(  # type: ignore
-                        torchdefault.tensor(weights[k], requires_grad=True)
-                        * mask.to(
-                            device=torch.get_default_device(),
-                            dtype=torch.get_default_dtype()
-                        )
+                with torch.no_grad():
+                    self.linear_layers[k].weight.copy_(  # type: ignore
+                        torchdefault.tensor(weight, requires_grad=True)
                     )
         self.__update_masks()
 
@@ -348,6 +334,18 @@ class LinealNN(Module):
         return numpy.sum([
             linear.weight.numel()  # type: ignore
             for linear in self.linear_layers
+            if isinstance(linear, Linear)
+        ]).item()
+
+    def get_total_connections(self):
+        """
+        A
+        """
+        return numpy.sum([
+            mask.sum().item()  # type: ignore
+            if mask is not None
+            else 0
+            for mask in self.masks_layer
         ]).item()
 
     def copy_with_masks(self, masks: list[Tensor]):

@@ -265,38 +265,41 @@ class TrainerNN:
             ).cpu().detach().numpy()
 
     def train_epoch(self, dataloader: DataLoader, seed: int | None = None):
+        torchdefault.set_defaults()
         if seed is None:
             seed = torch.seed()
         else:
             torch.manual_seed(seed=seed)
         batch_loss = []
         raw_loss = []
+        self.model.train()
         for features, targets in dataloader:
-            torchdefault.set_defaults()
-            self.model.train()
             weights_copy = []
-            for linear_layer, connect_dropout, mask in (
-                (linear_layer, connect_dropout, mask)
-                for linear_layer, connect_dropout, mask in zip(
-                    self.model.linear_layers,
-                    self.connection_dropout,
-                    self.model.masks_layer
-                ) if connect_dropout is not None
+            for linear_layer, connect_dropout, mask in zip(
+                self.model.linear_layers,
+                self.connection_dropout,
+                self.model.masks_layer
             ):
-                weight = linear_layer.weight
-                connection_mask = torch.full_like(
-                    weight,  # type: ignore
-                    connect_dropout,
-                    dtype=torch.get_default_dtype(),
-                    device=torch.get_default_device()
-                ).bernoulli().bool()
-                weight_mask = mask.bitwise_and(connection_mask)
-                linear_layer.weight = (
-                    weight.clone() * weight_mask.type_as(  # type: ignore
-                        weight  # type: ignore
-                    )
-                )
-                weights_copy += [weight]
+                if (
+                    connect_dropout is not None and
+                    mask is not None and
+                    isinstance(linear_layer, torch.nn.Linear)
+                ):
+                    weight = linear_layer.weight
+                    connection_mask = torch.full_like(
+                        weight,  # type: ignore
+                        connect_dropout,
+                        dtype=torch.get_default_dtype(),
+                        device=torch.get_default_device()
+                    ).bernoulli().bool()
+                    weight_mask = mask.bitwise_and(connection_mask)
+                    with torch.no_grad():
+                        linear_layer.weight.copy_(
+                            weight.clone() * weight_mask.type_as(  # type: ignore
+                                weight  # type: ignore
+                            )
+                        )
+                    weights_copy += [weight]
             self.optimizer.zero_grad()
             loss = self.dataset.loss_fn(self.model(features), targets)
             with ThreadPoolExecutor(max_workers=4) as executor:
@@ -318,32 +321,39 @@ class TrainerNN:
                     l1a_future.result() + l2a_future.result()
                 )
             loss.backward()
-            for weight, (linear_layer, mask) in zip(
-                weights_copy,
-                (
-                    (linear_layer, mask)
-                    for linear_layer, con_dropout, mask in zip(
-                        self.model.linear_layers,
-                        self.connection_dropout,
-                        self.model.masks_layer
-                    ) if con_dropout is not None
-                )
+            copys = iter(weights_copy)
+            for linear_layer, connect_dropout, mask in zip(
+                self.model.linear_layers,
+                self.connection_dropout,
+                self.model.masks_layer
             ):
-                linear_layer.weight = weight  # type: ignore
+                if (
+                    connect_dropout is not None and
+                    mask is not None and
+                    isinstance(linear_layer, torch.nn.Linear)
+                ):
+                    with torch.no_grad():
+                        linear_layer.weight.copy_(next(copys))  # type: ignore
             for linear_layer, mask in zip(
                 self.model.linear_layers, self.model.masks_layer
             ):
-                linear_layer.weight.grad.copy_(  # type: ignore
-                    linear_layer.weight.grad
-                    * mask.type_as(  # type: ignore
-                        linear_layer.weight.grad  # type: ignore
-                    )
-                )
-            self.model.eval()
-            batch_loss += [loss.cpu().detach().item()]
+                if (
+                    isinstance(linear_layer, torch.nn.Linear) and
+                    linear_layer.weight.grad is not None
+                    and mask is not None
+                ):
+                    with torch.no_grad():
+                        linear_layer.weight.grad.copy_(  # type: ignore
+                            linear_layer.weight.grad
+                            * mask.type_as(  # type: ignore
+                                linear_layer.weight.grad  # type: ignore
+                            )
+                        )
             self.optimizer.step()
+            batch_loss += [loss.cpu().detach().item()]
         if self.scheduler is not None:
             self.scheduler.step()
+        self.model.eval()
         return numpy.mean(batch_loss).item()
 
     def test_epoch(self, dataloader: DataLoader):

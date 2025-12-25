@@ -3,17 +3,12 @@ Codigo que entrena la red neuronal de Breast Cancer Winsconsin Diagnostic
 """
 import argparse
 from argparse import ArgumentParser
-from copy import deepcopy
 from pathlib import Path
 from time import sleep
 from concurrent.futures import ThreadPoolExecutor
 from utility.signal import InterruptHandler
-import numpy
 import utility.nn.torchdefault as torchdefault
 from utility.io.crossvalidation import load_trainer
-from utility.metaheuristics.hill_climb import hill_climb
-from utility.io.metaheuristics import save_archs
-from utility.nn.stats import comparative_dataframe
 
 
 def main(args: argparse.Namespace):
@@ -23,24 +18,9 @@ def main(args: argparse.Namespace):
     """
     torchdefault.set_defaults()
     trainer = load_trainer(args.load_path)
-    trainer.epochs = 100
-    trainer.overfit_tolerance = 10
-    ss = numpy.random.SeedSequence(0)
-    generator = numpy.random.default_rng(ss)
-    new_trainer = trainer.copy()
-    new_weights = hill_climb(
-        weights=new_trainer.model.get_weights(),
-        dataset=new_trainer.dataset,
-        trainer=new_trainer,
-        p=1e-20,
-        seed=generator
-    )
-    new_trainer.model.set_weights(new_weights)
-    save_archs(trainer, new_trainer, args.save_path)
-    comparative_dataframe(
-        [trainer, new_trainer],
-        ['original', 'optimized']
-    ).to_csv(args.save_path / 'hill_climb.csv')
+    #df = comparative_dataframe([trainer], ['trainer'])
+    #df.to_csv(path_or_buf=args.save_path)
+
 
 if __name__ == '__main__':
     import sys
@@ -57,5 +37,4 @@ if __name__ == '__main__':
         default=Path.cwd() / 'Data' /
         'Breast Cancer Winsconsin (Diagnostic)'
     )
-    argparser.add_argument('--load', '-l', action='store_true')
     sys.exit(main(argparser.parse_args(sys.argv[1:])))
